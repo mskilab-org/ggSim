@@ -1,9 +1,9 @@
 #' @import skitools
-#' @import skidb
 #' @import data.table
 #' @import gGnome
 #' @import gUtils
 #' @import bamUtils
+#' @import skidb
 
 #' @name .simcov
 #' @title 
@@ -120,7 +120,7 @@ ggsim = function(junctions,
                  vcf,
                  bias,
                  nbias,
-                 snps,
+                 snp = NULL,
                  unmappable,
                  coverage,
                  ncoverage,
@@ -144,7 +144,7 @@ ggsim = function(junctions,
     CNun = unmappable %>% readRDS
   
   message('Loading phased SNPs')
-  snps  = skidb::read_vcf(vcf, geno = TRUE)
+  snps  = read_vcf(vcf, geno = TRUE)
   fn = rev(names(values(snps)))[1]
   snps = snps[lengths(snps$ALT)==1] ## remove multiallelic
   snps$ALT = unstrsplit(snps$ALT)
@@ -163,8 +163,8 @@ ggsim = function(junctions,
   
   ## additional snps that are homozogyous REF in the reference sample may not be
   ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
-  if (!is.null(snps)){
-    allsnps = read_vcf(snps)
+  if (!is.null(snp)){
+    allsnps = read_vcf(snp)
     allsnps = allsnps[lengths(allsnps$ALT)==1] ## remove multiallelic
     allsnps$ALT = unstrsplit(allsnps$ALT)
     allsnps = allsnps[nchar(allsnps$REF)==1 & nchar(allsnps$ALT) == 1] ## keep only SNPs
@@ -186,220 +186,158 @@ ggsim = function(junctions,
   values(snps.A)[, "allele"] = copy(values(snps.A)[, "A"])
   values(snps.B)[, "allele"] = copy(values(snps.B)[, "B"])
   hapsnps = grbind(snps.A, snps.B)
+  
+  ## make new haplotype seqlengths i.e. across A and B haplotypes
+  sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% as.data.table %>% cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
+
+  jjhap = junctions
+  if (length(junctions))
+  {
+    ## initial graph to make eclusters
+    igg = gG(junctions = junctions)
+    igg$eclusters(thresh = 1e5)
+    
+    ## only ALT junctions
+    jj = igg$junctions[type == "ALT"][, 'ecluster']
+    #give NA junctions a unique cluster
+    jj = jj$set(ecluster = ifelse(is.na(jj$dt$ecluster), max(c(0, jj$dt$ecluster), na.rm = TRUE) + 1:length(jj), jj$dt$ecluster)) 
+
+    ## now assign every ecluster and chromosome the same haplotype and jcn given some ploidy
+    hapdt = (jj$grl %>% grl.unlist) %>% gr2dt %>% cc(.(seqnames, ecluster)) %>% unique %>% cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% setkeyv(c('seqnames', 'ecluster'))
+
+    hapdt$jcn = rexp(nrow(hapdt), rate = 2/tau) %>% ceiling
+    jj$set(hap1 = hapdt[.(seqnames(jj$left) %>% as.character, jj$dt$ecluster), hap])
+    jj$set(hap2 = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), hap])
+    jj$set(cn = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), jcn])
+
+    ## now lift junctions into haplotype coordinates
+    left = jj$left %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap1)) %>% dt2gr(seqlengths = sl)
+    
+    right = jj$right %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap2)) %>% dt2gr(seqlengths = sl)
+    hapgrl = split(grbind(left, right), rep(1:length(left), 2))
+    values(hapgrl) = jj$dt
+    jjhap = jJ(hapgrl)
+    message('assigned junctions to germline haplotypes')
+
+    ## make genome graph with lb 1 on all provided junctions
+    jjhap$set(cn = NA)
+    jjhap$set(lb = 1)
+  }
+  
+  breaks = NULL
+  if (!is.null(unmappable))
+  {
+    CNun = rbind(gr2dt(CNun)[, seqnames := paste(seqnames, 'A')],
+                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
+    breaks = gr.sample(CNun, numbreaks) ## sample some random unmappable breaks
+  }
+  
+  #' #' zchoo Monday, Apr 25, 2022 11:19:38 AM
+  #' ## add option for including a CNLOH junction
+  #' if (opt$cnloh) {
+  #'   
+  #'   message("Creating a CNLOH edge")
+  #'   
+  #'   ## get the gaps between current breakends
+  #'   ## in **diploid** coordinates
+  #'   if (grepl("rds$", opt$junctions)) {
+  #'     og.junctions = jJ(readRDS(opt$junctions))
+  #'   } else {
+  #'     og.junctions = jJ(opt$junctions)
+  #'   }
+  #'   
+  #'   if (length(og.junctions)) {
+  #'     jjhap.bnds = unlist(og.junctions$grl)
+  #'   } else {
+  #'     jjhap.bnds = GRanges(seqinfo = seqinfo(og.junctions), seqlengths = seqlengths(og.junctions))
+  #'   }
+  #'   
+  #'   if (is.null(breaks) || is.na(breaks) || length(breaks) == 0) {
+  #'     bnds = gr.stripstrand(jjhap.bnds)
+  #'   } else {
+  #'     bnds = grbind(gr.stripstrand(jjhap.bnds), gr.stripstrand(breaks))
+  #'   }
+  #'   
+  #'   ## get gaps that are at least 1e5 from the breaks
+  #'   gaps = gaps(bnds + 1e5)
+  #'   gaps = gaps %Q% (strand(gaps) == "*")
+  #'   ## only autosomes
+  #'   gaps = gaps %Q% (as.character(seqnames(gaps)) %in% as.character(1:22))
+  #'   
+  #'   ## sample a point (one for now but make this adjustable in the future?)
+  #'   ## this would need to be iterative to avoid sampling points taht are too close together
+  #'   cnloh.br = gr.sample(gaps, k = 1, wid = 1)
+  #'   
+  #'   message("Sampled a CNLOH edge located at: ",
+  #'           paste(seqnames(cnloh.br), ":", GenomicRanges::start(cnloh.br)))
+  #'   
+  #'   ## create a junction from haplotype A to B
+  # '   ## but should in theory make a vector giving the A/B parity
+  # '   cnloh.br.haploid = GRangesList(GRanges(seqnames = c(paste(seqnames(cnloh.br), "A"),
+  #'                                                       paste(seqnames(cnloh.br), "B")),
+  #'                                          ranges = IRanges(start = c(GenomicRanges::start(cnloh.br),
+  #'                                                                     GenomicRanges::start(cnloh.br) + 1),
+  # '                                                           width = 1),
+  #'                                          strand = c("-", "+")))
+  #'   
+  #'   jjcnloh = jJ(cnloh.br.haploid)
+  #'   jjcnloh$set(cn = NA)
+  #'   jjcnloh$set(lb = 1) ## force in this junction
+  #'   jjcnloh$set(ub = 1) ## force in this junction
+  #'   ## mark this in some way?
+  #'   jjcnloh$set(cnloh = TRUE)
+  #'   jjhap = c(jjhap, jjcnloh)
+  #' }
+ 
+  gg = gG(junctions = jjhap, breaks = breaks, genome = sl)
+  gg$nodes$mark(cn = tau/2)
+  
+  #' ## if using cnloh we will need to fix some nodes
+  #' ## hmm let's fix the start to be equal?
+  #' if (cnloh) {
+  #'   message("Fixing nodes to be equal...")
+  #'   n1 = gg$nodes$dt[seqnames == paste(seqnames(cnloh.br), "A") & end == GenomicRanges::start(cnloh.br), node.id]
+  #'   n2 = gg$nodes$dt[seqnames == paste(seqnames(cnloh.br), "B") & end == GenomicRanges::start(cnloh.br), node.id]
+  #'   gg$nodes[node.id == n1]$mark(ub = ceiling(opt$tau/2), lb = ceiling(opt$tau/2))
+  #'   gg$nodes[node.id == n2]$mark(ub = ceiling(opt$tau/2), lb = ceiling(opt$tau/2))
+  #' }
+  
+  gg$nodes$mark(weight = 0.1*gg$nodes$dt$width/1e6)
+  message('built basic graph from junctions and copy number breaks')
+
+  #' ## fitted haplotype graph, where every provided alt edge is given some nonzero copy number
+  #' saveRDS(gg, paste0(outdir, '/tmp.gg.rds'))
+  ggb = balance(gg, lambda = 10000, epgap = 1e-6, ism = FALSE, verbose = 2, tilim = 600)
+  ggb$nodes$mark(hap = gg$nodes$dt$seqnames %>% as.character %>% strsplit(' ') %>% sapply('[', 2))
+  message('balanced phased graph constraining all junctions to be incorporated yielding diploid ploidy ', gGnome:::ploidy(ggb) %>% signif(3))
+ 
+  ## lift haplotype graph from diploid coordinates (i.e. separate coordiante for each haplotype)
+  ## back to standard haploid genome coordinates
+  ## there should be two nodes per haploid coordinate here
+  ## lift phased graph to haploid coordinates
+  ## use just the final space?
+  nodes = ggb$nodes$gr %>% gr2dt %>% .separate(old = 'seqnames', sep = ' (?=[^ ]+$)', new = c('seqnames', 'hap'), perl = TRUE) %>% dt2gr
+  ## ggl = gG(nodes = nodes, edges = ggb$edges$dt) %>% gGnome:::loosefix ## pipe and ":::" not playing nice
+  ggl = gGnome:::loosefix(gG(nodes = nodes, edges = ggb$edges$dt))
+  ggl$edges$mark(type = ifelse(ggl$edges$class == 'REF', 'REF', 'ALT'))
+  ggl$set(y.field = 'cn', purity = alpha, ploidy = gGnome:::ploidy(ggl))
+  message('lifted phased graph from diploid to haploid coordinates')
+  
+  ## also make disjoined / collapsed jabba graph, will be one of the key outputs
+  ## there will be one node per haploid coordinate here
+  ggd = ggl$copy
+  ggd$nodes$mark(acn = ifelse(ggd$nodes$dt$hap == 'A', ggd$nodes$dt$cn, 0))
+  ggd$nodes$mark(bcn = ifelse(ggd$nodes$dt$hap == 'B', ggd$nodes$dt$cn, 0))
+  ggd = ggd$disjoin()
+  ggd$edges$mark(type = ifelse(ggd$edges$class == 'REF', 'REF', 'ALT'))
+  ggd$set(y.field = 'cn', purity = opt$alpha, ploidy = gGnome:::ploidy(ggd))
+  message('made collapsed jabba style graph with one node per haploid coordinate, keeping track of allelic copy numbers giving ploidy ', gGnome:::ploidy(ggd) %>% signif(3))
+
+  
 }
 
 
 
-#' {
-#' 
-#'   
-#'   parseobj = OptionParser(option_list=option_list)
-#'   opt = parse_args(parseobj)
-#'   
-#'   if (is.null(opt$libdir) | (is.null(opt$junctions)) | is.null(opt$vcf) | is.null(opt$bias)| is.null(opt$nbias))
-#'     stop(print_help(parseobj))
-#'   
-#'   print(opt)
-#'   
-#'   print(.libPaths())
-#'   options(error=function() { traceback(2); quit("no", 1) })
-#'   
-#'   ## keep record of run
-#'   writeLines(paste(paste('--', names(opt), ' ', sapply(opt, function(x) paste(x, collapse = ',')), sep = '', collapse = ' '), sep = ''), paste(opt$outdir, 'cmd.args', sep = '/'))
-#'   saveRDS(opt, paste(opt$outdir, 'cmd.args.rds', sep = '/'))
-#' }
-#' 
-#' suppressWarnings(expr = {
-#'   suppressMessages(expr = {
-#'     suppressPackageStartupMessages(expr = {
-#'       library(skitools)
-#'       library(skidb)
-#'       library(data.table)
-#'       library(gGnome)
-#'       library(gUtils)
-#'       library(bamUtils)
-#'       ## devtools::load_all('~/git/gGnome')
-#'     })
-#'   })
-#' })
-#' 
-#' setDTthreads(1)
-#' 
-#' system(paste('mkdir -p',  opt$outdir))
-#' 
-#' if (!is.null(opt$unmappable))
-#'   CNun = opt$unmappable %>% readRDS
-#' 
-#' message('Loading phased SNPs')
-#' snps  = read_vcf(opt$vcf, geno = TRUE)
-#' fn = rev(names(values(snps)))[1]
-#' snps = snps[lengths(snps$ALT)==1] ## remove multiallelic
-#' snps$ALT = unstrsplit(snps$ALT)
-#' snps = snps[nchar(snps$REF)==1 & nchar(snps$ALT) == 1]
-#' snps = snps[, c('REF', 'ALT', fn)] %>% as.data.frame %>% .separate(fn, c('A', 'B'), '\\|') %>% dt2gr %>% gr.sub
-#' if (grepl("rds$", opt$junctions)) {
-#'   junctions = jJ(readRDS(opt$junctions))
-#' } else {
-#'   junctions = jJ(opt$junctions)
-#' }
-#' snps$het = snps$A != snps$B
-#' snpmat = values(snps)[, c('REF', 'ALT')] %>% as.matrix
-#' snps$A = snpmat[cbind(1:length(snps), as.numeric(snps$A)+1)] ## convert integer phases to bases
-#' snps$B = snpmat[cbind(1:length(snps), as.numeric(snps$B)+1)]
-#' message('ingested junctions and phased SNPs')
-#' 
-#' ## snpmat = values(snps)[, c('REF', 'ALT')] %>% as.matrix
-#' ## snps$A = snpmat[cbind(1:length(snps), as.numeric(snps$A)+1)]
-#' ## snps$B = snpmat[cbind(1:length(snps), as.numeric(snps$B)+1)]
-#' 
-#' ## additional snps that are homozogyous REF in the reference sample may not be
-#' ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
-#' if (!is.null(opt$snps))
-#' {
-#'   allsnps = read_vcf(opt$snps)
-#'   allsnps = allsnps[lengths(allsnps$ALT)==1] ## remove multiallelic
-#'   allsnps$ALT = unstrsplit(allsnps$ALT)
-#'   allsnps = allsnps[nchar(allsnps$REF)==1 & nchar(allsnps$ALT) == 1] ## keep only SNPs
-#'   othersnps = allsnps[!(allsnps %^% snps)][, c('REF', 'ALT')]
-#'   othersnps$A = othersnps$B = othersnps$REF
-#'   othersnps$het = FALSE
-#'   snps = grbind(snps, othersnps)
-#'   message('Loading and appended reference SNPs')
-#' }
-#' 
-#' ## flag hom ALT and hom REF snps
-#' snps$homALT = snps$A == snps$B & snps$A == snps$ALT
-#' snps$homREF = snps$A == snps$B & snps$A == snps$REF
-#' 
-#' ## convert snps into diploid i.e. parental haplotype coordinate
-#' snps.A = copy(snps); snps.B = copy(snps)
-#' seqlevels(snps.A) = paste(seqlevels(snps.A), "A")
-#' seqlevels(snps.B) = paste(seqlevels(snps.B), "B")
-#' values(snps.A)[, "allele"] = copy(values(snps.A)[, "A"])
-#' values(snps.B)[, "allele"] = copy(values(snps.B)[, "B"])
-#' hapsnps = grbind(snps.A, snps.B)
-#' ## hapsnps = grbind(
-#' ##   gr2dt(snps)[, seqnames := paste(seqnames, 'A')][, allele := A] %>% dt2gr %>% cc('allele'),
-#' ##   gr2dt(snps)[, seqnames := paste(seqnames, 'B')][, allele := B] %>% dt2gr %>% cc('allele')
-#' ## )
-#' 
-#' ## make new haplotype seqlengths i.e. across A and B haplotypes
-#' sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% as.data.table %>% cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
-#' 
-#' jjhap = junctions
-#' if (length(junctions))
-#' {
-#'   ## initial graph to make eclusters
-#'   igg = gG(junctions = junctions)
-#'   igg$eclusters(thresh = 1e5)
-#'   ## only ALT junctions
-#'   jj = igg$junctions[type == "ALT"][, 'ecluster']
-#'   jj = jj$set(ecluster = ifelse(is.na(jj$dt$ecluster), max(c(0, jj$dt$ecluster), na.rm = TRUE) + 1:length(jj), jj$dt$ecluster))
-#'   
-#'   ## now assign every ecluster and chromosome the same haplotype and jcn given some ploidy
-#'   hapdt = (jj$grl %>% grl.unlist) %>% gr2dt %>% cc(.(seqnames, ecluster)) %>% unique %>% cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% setkeyv(c('seqnames', 'ecluster'))
-#'   
-#'   hapdt$jcn = rexp(nrow(hapdt), rate = 2/opt$tau) %>% ceiling
-#'   jj$set(hap1 = hapdt[.(seqnames(jj$left) %>% as.character, jj$dt$ecluster), hap])
-#'   jj$set(hap2 = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), hap])
-#'   jj$set(cn = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), jcn])
-#'   
-#'   ## now lift junctions into haplotype coordinates
-#'   left = jj$left %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap1)) %>% dt2gr(seqlengths = sl)
-#'   right = jj$right %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap2)) %>% dt2gr(seqlengths = sl)
-#'   hapgrl = split(grbind(left, right), rep(1:length(left), 2))
-#'   values(hapgrl) = jj$dt
-#'   jjhap = jJ(hapgrl)
-#'   message('assigned junctions to germline haplotypes')
-#'   
-#'   ## make genome graph with lb 1 on all provided junctions
-#'   jjhap$set(cn = NA)
-#'   jjhap$set(lb = 1)
-#' }
-#' 
-#' 
-#' breaks = NULL
-#' if (!is.null(opt$unmappable))
-#' {
-#'   CNun = rbind(gr2dt(CNun)[, seqnames := paste(seqnames, 'A')],
-#'                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
-#'   breaks = gr.sample(CNun, opt$numbreaks) ## sample some random unmappable breaks
-#' }
-#' 
-#' #' zchoo Monday, Apr 25, 2022 11:19:38 AM
-#' ## add option for including a CNLOH junction
-#' if (opt$cnloh) {
-#'   
-#'   message("Creating a CNLOH edge")
-#'   
-#'   ## get the gaps between current breakends
-#'   ## in **diploid** coordinates
-#'   if (grepl("rds$", opt$junctions)) {
-#'     og.junctions = jJ(readRDS(opt$junctions))
-#'   } else {
-#'     og.junctions = jJ(opt$junctions)
-#'   }
-#'   
-#'   if (length(og.junctions)) {
-#'     jjhap.bnds = unlist(og.junctions$grl)
-#'   } else {
-#'     jjhap.bnds = GRanges(seqinfo = seqinfo(og.junctions), seqlengths = seqlengths(og.junctions))
-#'   }
-#'   
-#'   if (is.null(breaks) || is.na(breaks) || length(breaks) == 0) {
-#'     bnds = gr.stripstrand(jjhap.bnds)
-#'   } else {
-#'     bnds = grbind(gr.stripstrand(jjhap.bnds), gr.stripstrand(breaks))
-#'   }
-#'   
-#'   ## get gaps that are at least 1e5 from the breaks
-#'   gaps = gaps(bnds + 1e5)
-#'   gaps = gaps %Q% (strand(gaps) == "*")
-#'   ## only autosomes
-#'   gaps = gaps %Q% (as.character(seqnames(gaps)) %in% as.character(1:22))
-#'   
-#'   ## sample a point (one for now but make this adjustable in the future?)
-#'   ## this would need to be iterative to avoid sampling points taht are too close together
-#'   cnloh.br = gr.sample(gaps, k = 1, wid = 1)
-#'   
-#'   message("Sampled a CNLOH edge located at: ",
-#'           paste(seqnames(cnloh.br), ":", GenomicRanges::start(cnloh.br)))
-#'   
-#'   ## create a junction from haplotype A to B
-#'   ## but should in theory make a vector giving the A/B parity
-#'   cnloh.br.haploid = GRangesList(GRanges(seqnames = c(paste(seqnames(cnloh.br), "A"),
-#'                                                       paste(seqnames(cnloh.br), "B")),
-#'                                          ranges = IRanges(start = c(GenomicRanges::start(cnloh.br),
-#'                                                                     GenomicRanges::start(cnloh.br) + 1),
-#'                                                           width = 1),
-#'                                          strand = c("-", "+")))
-#'   
-#'   jjcnloh = jJ(cnloh.br.haploid)
-#'   jjcnloh$set(cn = NA)
-#'   jjcnloh$set(lb = 1) ## force in this junction
-#'   jjcnloh$set(ub = 1) ## force in this junction
-#'   ## mark this in some way?
-#'   jjcnloh$set(cnloh = TRUE)
-#'   jjhap = c(jjhap, jjcnloh)
-#' }
-#' 
-#' gg = gG(junctions = jjhap, breaks = breaks)
-#' gg$nodes$mark(cn = opt$tau/2)
-#' 
-#' ## if using cnloh we will need to fix some nodes
-#' ## hmm let's fix the start to be equal?
-#' if (opt$cnloh) {
-#'   message("Fixing nodes to be equal...")
-#'   n1 = gg$nodes$dt[seqnames == paste(seqnames(cnloh.br), "A") & end == GenomicRanges::start(cnloh.br), node.id]
-#'   n2 = gg$nodes$dt[seqnames == paste(seqnames(cnloh.br), "B") & end == GenomicRanges::start(cnloh.br), node.id]
-#'   gg$nodes[node.id == n1]$mark(ub = ceiling(opt$tau/2), lb = ceiling(opt$tau/2))
-#'   gg$nodes[node.id == n2]$mark(ub = ceiling(opt$tau/2), lb = ceiling(opt$tau/2))
-#' }
-#' 
-#' gg$nodes$mark(weight = 0.1*gg$nodes$dt$width/1e6)
-#' message('built basic graph from junctions and copy number breaks')
-#' 
-#' 
 #' ## fitted haplotype graph, where every provided alt edge is given some nonzero copy number
 #' saveRDS(gg, paste0(opt$outdir, '/tmp.gg.rds'))
 #' ggb = balance(gg, lambda = 10000, epgap = 1e-6, ism = FALSE, verbose = 2, tilim = 600)
@@ -439,7 +377,7 @@ ggsim = function(junctions,
 #' nbias = opt$nbias %>% readRDS %>% gr.nochr
 #' fn = names(values(nbias))[1]
 #' #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
-#' nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
+#' nbias$bias = valuesccccccccccccc(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
 #' message('ingested and processed normal bias GRanges')
 #' 
 #' cov = .simcov(ggd$nodes$gr, purity = opt$alpha, basecov = opt$coverage, binsize = opt$width, normalize = FALSE, bias = bias[, 'bias'], poisson = opt$poisson)
