@@ -1,3 +1,7 @@
+---
+
+
+
                _____ _           
               / ____(_)          
    __ _  __ _| (___  _ _ __ ___  
@@ -7,5 +11,9 @@
    __/ | __/ |                   
   |___/ |___/                    
 
-### <font color=black> Comprehensive simulation of whole-genome gGraphs with Poisson obfuscation of coverage </font>
+### <font color=black> Simulation of whole-genome gGraphs featuring </font>
+
+* coverage of matched tumor/normal (optional Poisson obfuscation)
+* SNP/allelic phasing
+* Junction input
 
