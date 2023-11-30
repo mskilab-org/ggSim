@@ -4,6 +4,7 @@
 #' @import gUtils
 #' @import bamUtils
 #' @import skidb
+#' @import gTrack
 
 #' @name .simcov
 #'
@@ -333,7 +334,7 @@ ggsim = function(junctions,
   ggd$nodes$mark(bcn = ifelse(ggd$nodes$dt$hap == 'B', ggd$nodes$dt$cn, 0))
   ggd = ggd$disjoin()
   ggd$edges$mark(type = ifelse(ggd$edges$class == 'REF', 'REF', 'ALT'))
-  ggd$set(y.field = 'cn', purity = opt$alpha, ploidy = gGnome:::ploidy(ggd))
+  ggd$set(y.field = 'cn', purity = alpha, ploidy = gGnome:::ploidy(ggd))
   message('made collapsed jabba style graph with one node per haploid coordinate, keeping track of allelic copy numbers giving ploidy ', gGnome:::ploidy(ggd) %>% signif(3))
 
   ###########################################################################
@@ -419,8 +420,8 @@ ggsim = function(junctions,
 
   ## generate normal sample hets with normal bias
   snpcov = snpcov %$% nbias[, 'bias']
-  snpcov$ncount_ALT = rpois(length(snpcov), (snpcov$homALT + snpcov$het) * opt$coverage/2 * snpcov$bias)
-  snpcov$ncount_REF = rpois(length(snpcov), (snpcov$homREF + snpcov$het) * opt$ncoverage/2 * snpcov$bias)
+  snpcov$ncount_ALT = rpois(length(snpcov), (snpcov$homALT + snpcov$het) * coverage/2 * snpcov$bias)
+  snpcov$ncount_REF = rpois(length(snpcov), (snpcov$homREF + snpcov$het) * ncoverage/2 * snpcov$bias)
   message('simulated normal allelic coverage')
 
   ## prepare het_pileups_wgs - like outtput
@@ -450,8 +451,8 @@ ggsim = function(junctions,
                       gr2dt(snpcov)[het == TRUE, count := count_B][, col := alpha('green', 0.1)]) %>% dt2gr
 
 
-  gt.rb = gTrack(redblue, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'high-low', max.ranges = 1e4)
-  gt.pg = gTrack(purplegreen, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'phased', max.ranges = 1e4)
+  gt.rb = gTrack(redblue, y.field = 'count', y0 = 0, circle = TRUE, y1 = coverage*2, lwd.border = 0.2, name = 'high-low', max.ranges = 1e4)
+  gt.pg = gTrack(purplegreen, y.field = 'count', y0 = 0, circle = TRUE, y1 = coverage*2, lwd.border = 0.2, name = 'phased', max.ranges = 1e4)
 
   #' zchoo Monday, Apr 25, 2022 12:44:10 PM
   ## restrict the max.ranges on coverage
@@ -464,127 +465,12 @@ ggsim = function(junctions,
   gt = c(gt.rb, gt.pg, gt.ncov, gt.cov, gt.tcov, tmp.gg$gtrack(name = 'phased'), ggd$gtrack(name = 'collapsed'))
   message('made gTracks')
 
-  fwrite(hets, paste0(opt$outdir, '/sites.txt'))
-  saveRDS(outcov, paste0(opt$outdir, '/cov.rds'))
-  saveRDS(ggl, paste0(opt$outdir, '/graph.phased.rds'))
-  saveRDS(ggd, paste0(opt$outdir, '/graph.unphased.rds'))
-  saveRDS(snpcov, paste0(opt$outdir, '/snps.rds'))
-  saveRDS(gt, paste0(opt$outdir, '/gt.rds'))
+  fwrite(hets, paste0(outdir, '/sites.txt'))
+  saveRDS(outcov, paste0(outdir, '/cov.rds'))
+  saveRDS(ggl, paste0(outdir, '/graph.phased.rds'))
+  saveRDS(ggd, paste0(outdir, '/graph.unphased.rds'))
+  saveRDS(snpcov, paste0(outdir, '/snps.rds'))
+  saveRDS(gt, paste0(outdir, '/gt.rds'))
   message('dumped out files and finished')
   
 }
-
-
-
-
-#' ## now sample from ggb and ggd to get total and het coverage
-#' bias = opt$bias %>% readRDS %>% gr.nochr
-#' fn = names(values(bias))[1] ## take first column as value
-#' #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
-#' bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
-#' message('ingested and processed tumor bias GRanges')
-#' 
-#' ## process second normal sample which will be used to simulate the normal depth
-#' nbias = opt$nbias %>% readRDS %>% gr.nochr
-#' fn = names(values(nbias))[1]
-#' #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
-#' nbias$bias = valuesccccccccccccc(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
-#' message('ingested and processed normal bias GRanges')
-#' 
-#' cov = .simcov(ggd$nodes$gr, purity = opt$alpha, basecov = opt$coverage, binsize = opt$width, normalize = FALSE, bias = bias[, 'bias'], poisson = opt$poisson)
-#' tmpgr = ggd$nodes$gr; tmpgr$cn = 2
-#' ncov = .simcov(tmpgr, purity = 1, basecov = opt$ncoverage, normalize = FALSE, binsize = opt$width, bias = nbias[, 'bias'], poisson = opt$poisson)
-#' 
-#' ## final output binned coverage
-#' outcov = cov
-#' outcov$tumor = cov$cov
-#' outcov$normal = ncov$cov
-#' outcov$ratio = outcov$tumor/outcov$normal
-#' outcov$ratio = outcov$ratio/median(outcov$ratio, na.rm = TRUE)
-#' message('simulated binned total coverage for tumor and matched normal')
-#' 
-#' ## simulate SNP coverage in diploid genome
-#' 
-#' ## lift bias GRanges to diploid coordinates
-#' a.bias = copy(bias)
-#' b.bias = copy(bias)
-#' seqlevels(a.bias) = paste(seqlevels(a.bias), "A")
-#' seqlevels(b.bias) = paste(seqlevels(b.bias), "B")
-#' hapbias = grbind(a.bias, b.bias)
-#' ## hapbias = rbind(as.data.table(bias)[, seqnames := paste(seqnames, 'A')],
-#' ##                 as.data.table(bias)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
-#' 
-#' hapsnpcov = .simcov(ggb$nodes$gr, bins = hapsnps, bias = hapbias, diploid = FALSE, basecov = opt$coverage/2, normalize = FALSE)
-#' hapsnpcov$count = round(hapsnpcov$cov)
-#' 
-#' ## now populate snps
-#' snpcov = hapsnpcov[, c("count", "allele", "cn")] %>% as.data.table %>% .separate('seqnames', c('seqnames', 'hap'), ' ') %>%  dcast.data.table(seqnames + start + end ~ hap, value.var = c('count', 'cn', 'allele')) %>% dt2gr
-#' 
-#' snpcov$REF = snps$REF[gr.match(snpcov, snps)]
-#' snpcov$ALT = snps$ALT[gr.match(snpcov, snps)]
-#' snpcov$count_ALT = snpcov$count_A*sign(snpcov$allele_A == snpcov$ALT) + snpcov$count_B*sign(snpcov$allele_B == snpcov$ALT)
-#' snpcov$count_REF = snpcov$count_A*sign(snpcov$allele_A == snpcov$REF) + snpcov$count_B*sign(snpcov$allele_B == snpcov$REF)
-#' snpcov$cn_ALT = snpcov$cn_A*sign(snpcov$allele_A == snpcov$ALT) + snpcov$cn_B*sign(snpcov$allele_B == snpcov$ALT)
-#' snpcov$cn_REF = snpcov$cn_A*sign(snpcov$allele_A == snpcov$REF) + snpcov$cn_B*sign(snpcov$allele_B == snpcov$REF)
-#' snpcov$high_count = pmax(snpcov$count_ALT, snpcov$count_REF)
-#' snpcov$low_count = pmin(snpcov$count_ALT, snpcov$count_REF)
-#' snpcov$het = snps$het[gr.match(snpcov, snps)]
-#' snpcov$homALT = snps$homALT[gr.match(snpcov, snps)]
-#' snpcov$homREF = snps$homREF[gr.match(snpcov, snps)]
-#' message('simulated phased tumor allelic coverage and lifted to haploid coordinates')
-#' 
-#' ## generate normal sample hets with normal bias
-#' snpcov = snpcov %$% nbias[, 'bias']
-#' snpcov$ncount_ALT = rpois(length(snpcov), (snpcov$homALT + snpcov$het) * opt$coverage/2 * snpcov$bias)
-#' snpcov$ncount_REF = rpois(length(snpcov), (snpcov$homREF + snpcov$het) * opt$ncoverage/2 * snpcov$bias)
-#' message('simulated normal allelic coverage')
-#' 
-#' ## prepare het_pileups_wgs - like outtput
-#' hets = as.data.table(snpcov)[, .(seqnames, start, end, strand,
-#'                                  Tumor_Seq_Allele1 = ALT,
-#'                                  Reference_Allele = REF,
-#'                                  alt.count.t = count_ALT,
-#'                                  ref.count.t = count_REF,
-#'                                  alt.frac.t = ifelse(count_ALT > 0,
-#'                                                      count_ALT / (count_ALT + count_REF),
-#'                                                      0),
-#'                                  ref.frac.t = ifelse(count_REF > 0,
-#'                                                      count_REF / (count_ALT + count_REF),
-#'                                                      0),
-#'                                  alt.count.n = as.numeric(ncount_ALT),
-#'                                  ref.count.n = as.numeric(ncount_REF))]
-#' 
-#' 
-#' hets[, ref.frac.n := ifelse(ref.count.n > 0, ref.count.n / (ref.count.n + alt.count.n), 0)]
-#' hets[, alt.frac.n := ifelse(alt.count.n > 0, alt.count.n / (ref.count.n + alt.count.n), 0)]
-#' 
-#' ## make gTracks
-#' redblue = rbind(gr2dt(snpcov)[het == TRUE, count := high_count][, col := alpha('red', 0.1)],
-#'                 gr2dt(snpcov)[het == TRUE, count := low_count][, col := alpha('blue', 0.1)]) %>% dt2gr
-#' 
-#' purplegreen = rbind(gr2dt(snpcov)[het == TRUE, count := count_A][, col := alpha('purple', 0.1)],
-#'                     gr2dt(snpcov)[het == TRUE, count := count_B][, col := alpha('green', 0.1)]) %>% dt2gr
-#' 
-#' 
-#' gt.rb = gTrack(redblue, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'high-low', max.ranges = 1e4)
-#' gt.pg = gTrack(purplegreen, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'phased', max.ranges = 1e4)
-#' 
-#' #' zchoo Monday, Apr 25, 2022 12:44:10 PM
-#' ## restrict the max.ranges on coverage
-#' gt.cov = gTrack(outcov, y.field = c('tumor'), lwd.border = 0.2, circle = TRUE, max.ranges = 1e4)
-#' gt.ncov = gTrack(outcov, y.field = c('normal'), lwd.border = 0.2, circle = TRUE, max.ranges = 1e4)
-#' gt.tcov = gTrack(outcov, y.field = c('ratio'), lwd.border = 0.2, circle = TRUE, y1 = 3, y0 = 0, max.ranges = 1e4)
-#' tmp.gg = ggl$copy
-#' tmp.gg$nodes$mark(cn = ifelse(tmp.gg$nodes$gr$hap == 'A', tmp.gg$nodes$gr$cn + 0.2, tmp.gg$nodes$gr$cn - 0.2))
-#' tmp.gg$nodes$mark(col = ifelse(tmp.gg$nodes$gr$hap == 'A', 'purple', 'green'))
-#' gt = c(gt.rb, gt.pg, gt.ncov, gt.cov, gt.tcov, tmp.gg$gtrack(name = 'phased'), ggd$gtrack(name = 'collapsed'))
-#' message('made gTracks')
-#' 
-#' fwrite(hets, paste0(opt$outdir, '/sites.txt'))
-#' saveRDS(outcov, paste0(opt$outdir, '/cov.rds'))
-#' saveRDS(ggl, paste0(opt$outdir, '/graph.phased.rds'))
-#' saveRDS(ggd, paste0(opt$outdir, '/graph.unphased.rds'))
-#' saveRDS(snpcov, paste0(opt$outdir, '/snps.rds'))
-#' saveRDS(gt, paste0(opt$outdir, '/gt.rds'))
-#' message('dumped out files and finished')
-#' }, echo = FALSE)
