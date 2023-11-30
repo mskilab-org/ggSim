@@ -6,25 +6,24 @@
 #' @import skidb
 
 #' @name .simcov
-#' @title 
 #'
 #' @description
 #'
 #' @param gr 
 #' @param binsize 
 #' @param bins 
-#' @param bias 
+#' @param bias granges of biases for given regions, first field is assumed to be the bias amount
 #' @param diploid 
 #' @param readsize 
 #' @param basecov 
 #' @param overdispersion 
-#' @param purity 
-#' @param poisson 
+#' @param purity target purity
+#' @param poisson add poisson noise? default == T
 #' @param normalize 
 .simcov = function(gr, ## needs field 'cn'
                    binsize = 1e3,
                    bins = gr.tile(seqlengths(gr), binsize),
-                   bias = NULL, ## granges of biases for given regions, first field is assumed to be the bias amount
+                   bias = NULL, 
                    diploid = TRUE,
                    readsize = 150,
                    basecov = 60,
@@ -74,6 +73,7 @@
 }
 
 #' @name .separate
+#' @description 
 #'
 #' @param dt 
 #' @param old 
@@ -82,18 +82,24 @@
 #' @param perl 
 #'
 #' @return
-#' @export
 #'
 #' @examples
 .separate = function(dt, old, new, sep, perl = FALSE)
 {
-  newdt = dt[[old]] %>% as.character %>% strsplit(split = sep, perl = perl) %>% do.call(rbind, .) %>% as.data.table %>% setnames(new)
+  newdt = dt[[old]] %>% 
+    as.character %>% 
+    strsplit(split = sep, perl = perl) %>% 
+    do.call(rbind, .) %>% 
+    as.data.table %>% 
+    setnames(new)
   dt[[old]] = NULL
   dt = cbind(dt, newdt)
   return(dt)
 }
 
 #' @name ggsim
+#' 
+#' @description function to simulate a gGraph complete with SNPs and junction phasing, and coverage
 #'
 #' @param junctions Path to junction file e.g. bedpe, vcf, rds
 #' @param vcf Phased VCF of germline hets
@@ -110,9 +116,7 @@
 #' @param width Binwidth for binned read depth
 #' @param cnloh add a cnloh edge
 #' @param outdir output directory
-#' @param libdir Directory containing this R file
 #'
-#' @return
 #' @export
 #'
 #' @examples
@@ -121,7 +125,7 @@ ggsim = function(junctions,
                  bias,
                  nbias,
                  snp = NULL,
-                 unmappable,
+                 unmappable = NULL,
                  coverage,
                  ncoverage,
                  alpha,
@@ -130,8 +134,7 @@ ggsim = function(junctions,
                  numbreaks,
                  width,
                  cnloh,
-                 outdir,
-                 libdir)
+                 outdir)
 {
   if (is.null(libdir) | (is.null(junctions)) | is.null(vcf) | is.null(bias)| is.null(nbias))
   stop()
@@ -272,12 +275,12 @@ ggsim = function(junctions,
   #'           paste(seqnames(cnloh.br), ":", GenomicRanges::start(cnloh.br)))
   #'   
   #'   ## create a junction from haplotype A to B
-  # '   ## but should in theory make a vector giving the A/B parity
-  # '   cnloh.br.haploid = GRangesList(GRanges(seqnames = c(paste(seqnames(cnloh.br), "A"),
+  #'   ## but should in theory make a vector giving the A/B parity
+  #'   cnloh.br.haploid = GRangesList(GRanges(seqnames = c(paste(seqnames(cnloh.br), "A"),
   #'                                                       paste(seqnames(cnloh.br), "B")),
   #'                                          ranges = IRanges(start = c(GenomicRanges::start(cnloh.br),
   #'                                                                     GenomicRanges::start(cnloh.br) + 1),
-  # '                                                           width = 1),
+  #'                                                           width = 1),
   #'                                          strand = c("-", "+")))
   #'   
   #'   jjcnloh = jJ(cnloh.br.haploid)
@@ -333,39 +336,147 @@ ggsim = function(junctions,
   ggd$set(y.field = 'cn', purity = opt$alpha, ploidy = gGnome:::ploidy(ggd))
   message('made collapsed jabba style graph with one node per haploid coordinate, keeping track of allelic copy numbers giving ploidy ', gGnome:::ploidy(ggd) %>% signif(3))
 
+  ###########################################################################
+  
+  ## now sample from ggb and ggd to get total and het coverage
+  bias = bias %>% readRDS %>% gr.nochr
+  fn = names(values(bias))[1] ## take first column as value
+  #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
+  bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
+  message('ingested and processed tumor bias GRanges')
+
+  ## process second normal sample which will be used to simulate the normal depth
+  nbias = nbias %>% readRDS %>% gr.nochr
+  fn = names(values(nbias))[1]
+  #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
+  nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
+  message('ingested and processed normal bias GRanges')
+
+  cov = .simcov(ggd$nodes$gr, 
+                purity = 0.01, 
+                basecov = coverage, 
+                binsize = width, 
+                normalize = FALSE, 
+                bias = bias[, 'bias'], 
+                poisson = poisson)
+  # cov %>% gTrack(y.field = c("cn", "cov")) -> a
+  # bias %>% gTrack(y.field = c('bias')) -> b
+  # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
+  tmpgr = ggd$nodes$gr; tmpgr$cn = 2
+  ncov = .simcov(tmpgr, 
+                 purity = 1, 
+                 basecov = ncoverage, 
+                 normalize = FALSE, 
+                 binsize = width, 
+                 bias = nbias[, 'bias'], 
+                 poisson = poisson)
+  # ncov %>% gTrack(y.field = c("cn", "cov")) -> a
+  # nbias %>% gTrack(y.field = c('bias')) -> b
+  # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
+  
+  ## final output binned coverage
+  outcov = cov
+  outcov$tumor = cov$cov
+  outcov$normal = ncov$cov
+  outcov$ratio = outcov$tumor/outcov$normal
+  outcov$ratio = outcov$ratio/median(outcov$ratio, na.rm = TRUE)
+  message('simulated binned total coverage for tumor and matched normal')
+
+  ## simulate SNP coverage in diploid genome
+
+  ## lift bias GRanges to diploid coordinates
+  a.bias = copy(bias)
+  b.bias = copy(bias)
+  seqlevels(a.bias) = paste(seqlevels(a.bias), "A")
+  seqlevels(b.bias) = paste(seqlevels(b.bias), "B")
+  hapbias = grbind(a.bias, b.bias)
+  ## hapbias = rbind(as.data.table(bias)[, seqnames := paste(seqnames, 'A')],
+  ##                 as.data.table(bias)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
+
+  hapsnpcov = .simcov(ggb$nodes$gr, 
+                      bins = hapsnps, 
+                      bias = hapbias, 
+                      diploid = FALSE, 
+                      basecov = coverage/2, 
+                      normalize = FALSE)
+  hapsnpcov$count = round(hapsnpcov$cov)
+
+  ## now populate snps
+  snpcov = hapsnpcov[, c("count", "allele", "cn")] %>% as.data.table %>% .separate('seqnames', c('seqnames', 'hap'), ' ') %>%  dcast.data.table(seqnames + start + end ~ hap, value.var = c('count', 'cn', 'allele')) %>% dt2gr
+
+  snpcov$REF = snps$REF[gr.match(snpcov, snps)]
+  snpcov$ALT = snps$ALT[gr.match(snpcov, snps)]
+  snpcov$count_ALT = snpcov$count_A*sign(snpcov$allele_A == snpcov$ALT) + snpcov$count_B*sign(snpcov$allele_B == snpcov$ALT)
+  snpcov$count_REF = snpcov$count_A*sign(snpcov$allele_A == snpcov$REF) + snpcov$count_B*sign(snpcov$allele_B == snpcov$REF)
+  snpcov$cn_ALT = snpcov$cn_A*sign(snpcov$allele_A == snpcov$ALT) + snpcov$cn_B*sign(snpcov$allele_B == snpcov$ALT)
+  snpcov$cn_REF = snpcov$cn_A*sign(snpcov$allele_A == snpcov$REF) + snpcov$cn_B*sign(snpcov$allele_B == snpcov$REF)
+  snpcov$high_count = pmax(snpcov$count_ALT, snpcov$count_REF)
+  snpcov$low_count = pmin(snpcov$count_ALT, snpcov$count_REF)
+  snpcov$het = snps$het[gr.match(snpcov, snps)]
+  snpcov$homALT = snps$homALT[gr.match(snpcov, snps)]
+  snpcov$homREF = snps$homREF[gr.match(snpcov, snps)]
+  message('simulated phased tumor allelic coverage and lifted to haploid coordinates')
+
+  ## generate normal sample hets with normal bias
+  snpcov = snpcov %$% nbias[, 'bias']
+  snpcov$ncount_ALT = rpois(length(snpcov), (snpcov$homALT + snpcov$het) * opt$coverage/2 * snpcov$bias)
+  snpcov$ncount_REF = rpois(length(snpcov), (snpcov$homREF + snpcov$het) * opt$ncoverage/2 * snpcov$bias)
+  message('simulated normal allelic coverage')
+
+  ## prepare het_pileups_wgs - like outtput
+  hets = as.data.table(snpcov)[, .(seqnames, start, end, strand,
+                                   Tumor_Seq_Allele1 = ALT,
+                                   Reference_Allele = REF,
+                                   alt.count.t = count_ALT,
+                                   ref.count.t = count_REF,
+                                   alt.frac.t = ifelse(count_ALT > 0,
+                                                       count_ALT / (count_ALT + count_REF),
+                                                       0),
+                                   ref.frac.t = ifelse(count_REF > 0,
+                                                       count_REF / (count_ALT + count_REF),
+                                                       0),
+                                   alt.count.n = as.numeric(ncount_ALT),
+                                   ref.count.n = as.numeric(ncount_REF))]
+
+
+  hets[, ref.frac.n := ifelse(ref.count.n > 0, ref.count.n / (ref.count.n + alt.count.n), 0)]
+  hets[, alt.frac.n := ifelse(alt.count.n > 0, alt.count.n / (ref.count.n + alt.count.n), 0)]
+
+  ## make gTracks
+  redblue = rbind(gr2dt(snpcov)[het == TRUE, count := high_count][, col := alpha('red', 0.1)],
+                  gr2dt(snpcov)[het == TRUE, count := low_count][, col := alpha('blue', 0.1)]) %>% dt2gr
+
+  purplegreen = rbind(gr2dt(snpcov)[het == TRUE, count := count_A][, col := alpha('purple', 0.1)],
+                      gr2dt(snpcov)[het == TRUE, count := count_B][, col := alpha('green', 0.1)]) %>% dt2gr
+
+
+  gt.rb = gTrack(redblue, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'high-low', max.ranges = 1e4)
+  gt.pg = gTrack(purplegreen, y.field = 'count', y0 = 0, circle = TRUE, y1 = opt$coverage*2, lwd.border = 0.2, name = 'phased', max.ranges = 1e4)
+
+  #' zchoo Monday, Apr 25, 2022 12:44:10 PM
+  ## restrict the max.ranges on coverage
+  gt.cov = gTrack(outcov, y.field = c('tumor'), lwd.border = 0.2, circle = TRUE, max.ranges = 1e4)
+  gt.ncov = gTrack(outcov, y.field = c('normal'), lwd.border = 0.2, circle = TRUE, max.ranges = 1e4)
+  gt.tcov = gTrack(outcov, y.field = c('ratio'), lwd.border = 0.2, circle = TRUE, y1 = 3, y0 = 0, max.ranges = 1e4)
+  tmp.gg = ggl$copy
+  tmp.gg$nodes$mark(cn = ifelse(tmp.gg$nodes$gr$hap == 'A', tmp.gg$nodes$gr$cn + 0.2, tmp.gg$nodes$gr$cn - 0.2))
+  tmp.gg$nodes$mark(col = ifelse(tmp.gg$nodes$gr$hap == 'A', 'purple', 'green'))
+  gt = c(gt.rb, gt.pg, gt.ncov, gt.cov, gt.tcov, tmp.gg$gtrack(name = 'phased'), ggd$gtrack(name = 'collapsed'))
+  message('made gTracks')
+
+  fwrite(hets, paste0(opt$outdir, '/sites.txt'))
+  saveRDS(outcov, paste0(opt$outdir, '/cov.rds'))
+  saveRDS(ggl, paste0(opt$outdir, '/graph.phased.rds'))
+  saveRDS(ggd, paste0(opt$outdir, '/graph.unphased.rds'))
+  saveRDS(snpcov, paste0(opt$outdir, '/snps.rds'))
+  saveRDS(gt, paste0(opt$outdir, '/gt.rds'))
+  message('dumped out files and finished')
   
 }
 
 
 
-#' ## fitted haplotype graph, where every provided alt edge is given some nonzero copy number
-#' saveRDS(gg, paste0(opt$outdir, '/tmp.gg.rds'))
-#' ggb = balance(gg, lambda = 10000, epgap = 1e-6, ism = FALSE, verbose = 2, tilim = 600)
-#' ggb$nodes$mark(hap = gg$nodes$dt$seqnames %>% as.character %>% strsplit(' ') %>% sapply('[', 2))
-#' message('balanced phased graph constraining all junctions to be incorporated yielding diploid ploidy ', gGnome:::ploidy(ggb) %>% signif(3))
-#' 
-#' ## lift haplotype graph from diploid coordinates (i.e. separate coordiante for each haplotype)
-#' ## back to standard haploid genome coordinates
-#' ## there should be two nodes per haploid coordinate here
-#' ## lift phased graph to haploid coordinates
-#' ## use just the final space?
-#' nodes = ggb$nodes$gr %>% gr2dt %>% .separate(old = 'seqnames', sep = ' (?=[^ ]+$)', new = c('seqnames', 'hap'), perl = TRUE) %>% dt2gr
-#' ## ggl = gG(nodes = nodes, edges = ggb$edges$dt) %>% gGnome:::loosefix ## pipe and ":::" not playing nice
-#' ggl = gGnome:::loosefix(gG(nodes = nodes, edges = ggb$edges$dt))
-#' ggl$edges$mark(type = ifelse(ggl$edges$class == 'REF', 'REF', 'ALT'))
-#' ggl$set(y.field = 'cn', purity = opt$alpha, ploidy = gGnome:::ploidy(ggl))
-#' message('lifted phased graph from diploid to haploid coordinates')
-#' 
-#' ## also make disjoined / collapsed jabba graph, will be one of the key outputs
-#' ## there will be one node per haploid coordinate here
-#' ggd = ggl$copy
-#' ggd$nodes$mark(acn = ifelse(ggd$nodes$dt$hap == 'A', ggd$nodes$dt$cn, 0))
-#' ggd$nodes$mark(bcn = ifelse(ggd$nodes$dt$hap == 'B', ggd$nodes$dt$cn, 0))
-#' ggd = ggd$disjoin()
-#' ggd$edges$mark(type = ifelse(ggd$edges$class == 'REF', 'REF', 'ALT'))
-#' ggd$set(y.field = 'cn', purity = opt$alpha, ploidy = gGnome:::ploidy(ggd))
-#' message('made collapsed jabba style graph with one node per haploid coordinate, keeping track of allelic copy numbers giving ploidy ', gGnome:::ploidy(ggd) %>% signif(3))
-#' 
+
 #' ## now sample from ggb and ggd to get total and het coverage
 #' bias = opt$bias %>% readRDS %>% gr.nochr
 #' fn = names(values(bias))[1] ## take first column as value
