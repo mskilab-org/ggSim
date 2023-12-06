@@ -5,98 +5,7 @@
 #' @import bamUtils
 #' @import skidb
 #' @import gTrack
-
-#' @name .simcov
-#'
-#' @description
-#'
-#' @param gr 
-#' @param binsize 
-#' @param bins 
-#' @param bias granges of biases for given regions, first field is assumed to be the bias amount
-#' @param diploid 
-#' @param readsize 
-#' @param basecov 
-#' @param overdispersion 
-#' @param purity target purity
-#' @param poisson add poisson noise? default == T
-#' @param normalize 
-.simcov = function(gr, ## needs field 'cn'
-                   binsize = 1e3,
-                   bins = gr.tile(seqlengths(gr), binsize),
-                   bias = NULL, 
-                   diploid = TRUE,
-                   readsize = 150,
-                   basecov = 60,
-                   overdispersion = NA,
-                   purity = 0.95,
-                   poisson = TRUE,
-                   normalize = TRUE)
-{
-  if (inherits(gr, 'gGraph'))
-    gr = gr$nodes$gr
-  
-  binsize = unique(width(bins))[1]
-  
-  if (diploid)
-    ncn = 2
-  else
-    ncn = 1
-  
-  bincov = (basecov*(readsize+binsize-1))/readsize ## estimate num reads per bin
-  
-  bins$cn = (bins %$% gr[, 'cn'])$cn
-  bins$cn.rel = (purity*bins$cn + ncn*(1-purity))/(purity*mean(bins$cn, na.rm = TRUE)+ ncn*(1-purity))
-  
-  if (poisson) {
-    if (is.na(overdispersion))
-      bins$cov = rpois(length(bins), bins$cn.rel*bincov)
-    else
-      bins$cov = rnbinom(length(bins), mu = bins$cn.rel*bincov,
-                         size = 1/overdispersion)
-  } else {
-    bins$cov = bins$cn.rel * bincov
-  }
-  
-  if (normalize)
-    bins$cov = bins$cov/mean(bins$cov, na.rm = TRUE)
-  
-  
-  if (!is.null(bias))
-  {
-    values(bias)[[1]] = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
-    bins$cov.og = bins$cov
-    ##bins$cov = bins$cov * values(bins[, c()] %$% bias[, 1])[[1]] ## made this immune to NA for targeted seq (Addy)
-    bins$cov = bins$cov * values(gr.val(bins[, c()], bias[, 1], na.rm = T, val = names(values(bias[, 1]))))[[1]]
-  }
-  
-  return(bins)
-}
-
-#' @name .separate
-#' @description 
-#'
-#' @param dt 
-#' @param old 
-#' @param new 
-#' @param sep 
-#' @param perl 
-#'
-#' @return
-#'
-#' @examples
-.separate = function(dt, old, new, sep, perl = FALSE)
-{
-  newdt = dt[[old]] %>% 
-    as.character %>% 
-    strsplit(split = sep, perl = perl) %>% 
-    do.call(rbind, .) %>% 
-    as.data.table %>% 
-    setnames(new)
-  dt[[old]] = NULL
-  dt = cbind(dt, newdt)
-  return(dt)
-}
+#' @import dplyr
 
 #' @name ggsim
 #' 
@@ -116,6 +25,7 @@
 #' @param numbreaks number of additional breaks to provide in cn unmappable regions
 #' @param width Binwidth for binned read depth
 #' @param cnloh add a cnloh edge
+#' @param standard.chr simulate which chromosomes? DEFAULT = autosomes, X, Y
 #' @param outdir output directory
 #'
 #' @export
@@ -135,6 +45,7 @@ ggsim = function(junctions,
                  numbreaks,
                  width,
                  cnloh,
+                 standard.chr = c(1:22, "X", "Y"),
                  outdir)
 {
   if (is.null(libdir) | (is.null(junctions)) | is.null(vcf) | is.null(bias)| is.null(nbias))
@@ -144,8 +55,28 @@ ggsim = function(junctions,
   
   system(paste('mkdir -p',  outdir))
   
-  if (!is.null(unmappable))
-    CNun = unmappable %>% readRDS
+  bias = bias %>% readRDS %>% gr.nochr
+  fn = names(values(bias))[1] ## take first column as value
+  #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
+  bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
+  message('ingested and processed tumor bias GRanges')
+  
+  ## process second normal sample which will be used to simulate the normal depth
+  nbias = nbias %>% readRDS %>% gr.nochr
+  fn = names(values(nbias))[1]
+  #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
+  nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
+  message('ingested and processed normal bias GRanges')
+  
+  ####### determine sex of tumor and normal bias
+  tbias.summary <- gr2dt(bias)[,.(mean.chr = mean(bias)), by = seqnames]
+  nbias.summary <- gr2dt(nbias)[,.(mean.chr = mean(bias)), by = seqnames]
+  ifelse(tbias.summary[seqnames == "X"]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
+  ifelse(nbias.summary[seqnames == "X"]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
+  sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing)
+  
+  if(tbias.sex != nbias.sex)
+    warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
   
   message('Loading phased SNPs')
   snps  = read_vcf(vcf, geno = TRUE)
@@ -163,6 +94,8 @@ ggsim = function(junctions,
   snpmat = values(snps)[, c('REF', 'ALT')] %>% as.matrix
   snps$A = snpmat[cbind(1:length(snps), as.numeric(snps$A)+1)] ## convert integer phases to bases
   snps$B = snpmat[cbind(1:length(snps), as.numeric(snps$B)+1)]
+  snps = snps %Q% (seqnames %in% standard.chr)
+  seqlevels(snps) <- seqlevels(snps)[seqlevels(snps) %in% standard.chr]
   message('ingested junctions and phased SNPs')
   
   ## additional snps that are homozogyous REF in the reference sample may not be
@@ -175,6 +108,9 @@ ggsim = function(junctions,
     othersnps = allsnps[!(allsnps %^% snps)][, c('REF', 'ALT')]
     othersnps$A = othersnps$B = othersnps$REF
     othersnps$het = FALSE
+    othersnps@ranges@NAMES <- NULL
+    othersnps = othersnps %Q% (seqnames %in% standard.chr)
+    seqlevels(othersnps) <- seqlevels(othersnps)[seqlevels(othersnps) %in% standard.chr]
     snps = grbind(snps, othersnps)
     message('Loading and appended reference SNPs')
   }
@@ -189,11 +125,27 @@ ggsim = function(junctions,
   seqlevels(snps.B) = paste(seqlevels(snps.B), "B")
   values(snps.A)[, "allele"] = copy(values(snps.A)[, "A"])
   values(snps.B)[, "allele"] = copy(values(snps.B)[, "B"])
+  
+  ## only define A allele for male samples and get rid of Y for female samples
+  if(sex == "M") {
+    snps.B <- snps.B %Q% (!seqnames %in% c("X B", "Y B"))
+    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("X B", "Y B")]
+  } else {
+    snps.A <- snps.A %Q% (!seqnames %in% c("Y A"))
+    snps.B <- snps.B %Q% (!seqnames %in% c("Y B"))
+    seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A")]
+    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("Y B")]
+  }
   hapsnps = grbind(snps.A, snps.B)
   
+  
   ## make new haplotype seqlengths i.e. across A and B haplotypes
-  sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% as.data.table %>% cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
-
+  sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% 
+    as.data.table %>% 
+    filter() %>%
+    cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
+  sl <- sl[names(sl) %in% seqlevels(hapsnps)] ## get rid of alleles based on seqlevels of hapsnps (sex-specific)
+  
   jjhap = junctions
   if (length(junctions))
   {
@@ -207,7 +159,16 @@ ggsim = function(junctions,
     jj = jj$set(ecluster = ifelse(is.na(jj$dt$ecluster), max(c(0, jj$dt$ecluster), na.rm = TRUE) + 1:length(jj), jj$dt$ecluster)) 
 
     ## now assign every ecluster and chromosome the same haplotype and jcn given some ploidy
-    hapdt = (jj$grl %>% grl.unlist) %>% gr2dt %>% cc(.(seqnames, ecluster)) %>% unique %>% cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% setkeyv(c('seqnames', 'ecluster'))
+    hapdt = (jj$grl %>% grl.unlist) %>% 
+      gr2dt %>% 
+      cc(.(seqnames, ecluster)) %>% 
+      unique %>% 
+      cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% 
+      mutate(hap = case_when(
+        seqnames %in% c("X", "Y", "chrX", "chrY") & sex == "M" ~ "A", #if male X or Y junction, assign it to A haplotype
+        T ~ hap #otherwise keep random assignment
+      )) %>%
+      setkeyv(c('seqnames', 'ecluster'))
 
     hapdt$jcn = rexp(nrow(hapdt), rate = 2/tau) %>% ceiling
     jj$set(hap1 = hapdt[.(seqnames(jj$left) %>% as.character, jj$dt$ecluster), hap])
@@ -216,7 +177,6 @@ ggsim = function(junctions,
 
     ## now lift junctions into haplotype coordinates
     left = jj$left %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap1)) %>% dt2gr(seqlengths = sl)
-    
     right = jj$right %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap2)) %>% dt2gr(seqlengths = sl)
     hapgrl = split(grbind(left, right), rep(1:length(left), 2))
     values(hapgrl) = jj$dt
@@ -231,8 +191,17 @@ ggsim = function(junctions,
   breaks = NULL
   if (!is.null(unmappable))
   {
+    CNun = unmappable %>% readRDS
+    seqlevels(CNun) <- seqlevels(CNun)[seqlevels(CNun) %in% standard.chr]
     CNun = rbind(gr2dt(CNun)[, seqnames := paste(seqnames, 'A')],
                 gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
+    if(sex == "M") {
+      CNun <- CNun %Q% (!seqnames %in% c("X B", "Y B"))
+      seqlevels(CNun) = seqlevels(CNun)[!seqlevels(CNun) %in% c("X B", "Y B")]
+    } else {
+      CNun <- snps.A %Q% (!seqnames %in% c("Y A", "Y B"))
+      seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A", "Y B")]
+    }
     breaks = gr.sample(CNun, numbreaks) ## sample some random unmappable breaks
   }
   
@@ -340,27 +309,15 @@ ggsim = function(junctions,
   ###########################################################################
   
   ## now sample from ggb and ggd to get total and het coverage
-  bias = bias %>% readRDS %>% gr.nochr
-  fn = names(values(bias))[1] ## take first column as value
-  #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
-  bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
-  message('ingested and processed tumor bias GRanges')
-
-  ## process second normal sample which will be used to simulate the normal depth
-  nbias = nbias %>% readRDS %>% gr.nochr
-  fn = names(values(nbias))[1]
-  #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
-  nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
-  message('ingested and processed normal bias GRanges')
 
   cov = .simcov(ggd$nodes$gr, 
-                purity = 0.01, 
+                purity = alpha, 
                 basecov = coverage, 
                 binsize = width, 
                 normalize = FALSE, 
                 bias = bias[, 'bias'], 
                 poisson = poisson)
-  # cov %>% gTrack(y.field = c("cn", "cov")) -> a
+  #cov %>% gTrack(y.field = c("cn", "cov")) -> a
   # bias %>% gTrack(y.field = c('bias')) -> b
   # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
   tmpgr = ggd$nodes$gr; tmpgr$cn = 2
@@ -372,7 +329,7 @@ ggsim = function(junctions,
                  bias = nbias[, 'bias'], 
                  poisson = poisson)
   # ncov %>% gTrack(y.field = c("cn", "cov")) -> a
-  # nbias %>% gTrack(y.field = c('bias')) -> b
+  # nbias %>% gTrack(y.field = c('bias'), ylab = "nbias") -> b
   # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
   
   ## final output binned coverage
@@ -473,4 +430,96 @@ ggsim = function(junctions,
   saveRDS(gt, paste0(outdir, '/gt.rds'))
   message('dumped out files and finished')
   
+}
+
+#' @name .simcov
+#'
+#' @description
+#'
+#' @param gr input gRanges on which to simulate coverage (requires field 'cn')
+#' @param binsize pon10 <- "/gpfs/commons/home/sbrylka/Projects/sb_dryclean/blacklist/pon_generation/pon_generation/whole_10/pon.rds"
+#' @param bins 
+#' @param bias granges of biases for given regions, first field is assumed to be the bias amount
+#' @param diploid 
+#' @param readsize 
+#' @param basecov 
+#' @param overdispersion 
+#' @param purity target purity
+#' @param poisson add poisson noise? default == T
+#' @param normalize 
+.simcov = function(gr, ## needs field 'cn'
+                   binsize = 1e3,
+                   bins = gr.tile(seqlengths(gr), binsize),
+                   bias = NULL, 
+                   diploid = TRUE,
+                   readsize = 150,
+                   basecov = 60,
+                   overdispersion = NA,
+                   purity = 0.95,
+                   poisson = TRUE,
+                   normalize = TRUE)
+{
+  if (inherits(gr, 'gGraph'))
+    gr = gr$nodes$gr
+  
+  binsize = unique(width(bins))[1]
+  
+  if (diploid)
+    ncn = 2
+  else
+    ncn = 1
+  
+  bincov = (basecov*(readsize+binsize-1))/readsize ## estimate num reads per bin
+  
+  bins$cn = (bins %$% gr[, 'cn'])$cn
+  bins$cn.rel = (purity*bins$cn + ncn*(1-purity))/(purity*mean(bins$cn, na.rm = TRUE)+ ncn*(1-purity))
+  
+  if (poisson) {
+    if (is.na(overdispersion))
+      bins$cov = rpois(length(bins), bins$cn.rel*bincov)
+    else
+      bins$cov = rnbinom(length(bins), mu = bins$cn.rel*bincov,
+                         size = 1/overdispersion)
+  } else {
+    bins$cov = bins$cn.rel * bincov
+  }
+  
+  if (normalize)
+    bins$cov = bins$cov/mean(bins$cov, na.rm = TRUE)
+  
+  
+  if (!is.null(bias))
+  {
+    values(bias)[[1]] = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
+    bins$cov.og = bins$cov
+    ##bins$cov = bins$cov * values(bins[, c()] %$% bias[, 1])[[1]] ## made this immune to NA for targeted seq (Addy)
+    bins$cov = bins$cov * values(gr.val(bins[, c()], bias[, 1], na.rm = T, val = names(values(bias[, 1]))))[[1]]
+  }
+  
+  return(bins)
+}
+
+#' @name .separate
+#' @description 
+#'
+#' @param dt 
+#' @param old 
+#' @param new 
+#' @param sep 
+#' @param perl 
+#'
+#' @return
+#'
+#' @examples
+.separate = function(dt, old, new, sep, perl = FALSE)
+{
+  newdt = dt[[old]] %>% 
+    as.character %>% 
+    strsplit(split = sep, perl = perl) %>% 
+    do.call(rbind, .) %>% 
+    as.data.table %>% 
+    setnames(new)
+  dt[[old]] = NULL
+  dt = cbind(dt, newdt)
+  return(dt)
 }
