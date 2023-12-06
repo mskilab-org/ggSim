@@ -16,7 +16,8 @@ Imports:
     gUtils,
     bamUtils,
     magrittr,
-    gTrack
+    gTrack,
+    dplyr
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.2.1.9000
