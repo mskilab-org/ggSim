@@ -46,7 +46,8 @@ ggsim = function(junctions,
                  width,
                  cnloh,
                  standard.chr = c(1:22, "X", "Y"),
-                 outdir)
+                 outdir,
+                 par.path = system.file("extdata", "PAR_hg19.rds", package = 'ggSim'))
 {
   if (is.null(libdir) | (is.null(junctions)) | is.null(vcf) | is.null(bias)| is.null(nbias))
   stop()
@@ -55,10 +56,15 @@ ggsim = function(junctions,
   
   system(paste('mkdir -p',  outdir))
   
+  par.file = par.path %>% readRDS()
+  
+  bias = opt$bias
+  nbias = opt$nbias
   bias = bias %>% readRDS %>% gr.nochr
   fn = names(values(bias))[1] ## take first column as value
   #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
   bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
+  bias$par = (bias %^% par.file) | (gr2dt(bias)$seqnames %in% c(1:22))
   message('ingested and processed tumor bias GRanges')
   
   ## process second normal sample which will be used to simulate the normal depth
@@ -66,6 +72,7 @@ ggsim = function(junctions,
   fn = names(values(nbias))[1]
   #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
   nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
+  nbias$par = (nbias %^% par.file) | (gr2dt(nbias)$seqnames %in% c(1:22))
   message('ingested and processed normal bias GRanges')
   
   ####### determine sex of tumor and normal bias
@@ -74,6 +81,12 @@ ggsim = function(junctions,
   ifelse(tbias.summary[seqnames == "X"]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
   ifelse(nbias.summary[seqnames == "X"]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
   sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing)
+  
+  #make the haploid coverages diploid on the X and Y chromosome... this will matter for sim coverages later
+  if (tbias.sex == "M")
+    bias = gr2dt(bias)[par == F, bias := bias * 2] %>% dt2gr()
+  if (nbias.sex == "M")
+    nbias = gr2dt(nbias)[par == F, bias := bias * 2] %>% dt2gr()
   
   if(tbias.sex != nbias.sex)
     warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
