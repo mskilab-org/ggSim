@@ -29,9 +29,7 @@
 user's input purity and ploidy.   
 
 The essential parameters to this function are `junctions`, `vcf`, `bias`, and `nbias`, and must be supplied. \
-`junctions` is a Junctions object, `vcf` defines the SNP profile for the sim genome, and `bias`/`nbias` represent the \
-normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth. \ 
-More details about function parameters are outlined in the table below.
+`junctions` is a Junctions object, `vcf` defines the SNP profile for the sim genome, and `bias`/`nbias</code> represent the normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth. More details about function parameters are outlined in the table below.
 
 <table style="border: 1px solid black; border-collapse: collapse;">
   <tbody>
@@ -41,91 +39,91 @@ More details about function parameters are outlined in the table below.
       <th style="border: 1px solid black; padding: 5px;">Description/notes</th>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`junctions`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>junctions</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
       <td style="border: 1px solid black; padding: 5px;">Junctions to add to gGraph as a GRangesList</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`vcf`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>vcf</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
       <td style="border: 1px solid black; padding: 5px;">Phased VCF of germline heterozygous SNPs. Can use any pileup of a genome or a [Platinum Genome from Illumina](https://github.com/Illumina/PlatinumGenomes).<br><br> <b>NOTE:</b> the sex of this input determines the sex of the simulated genome. Presence/absence of heterozygous SNPs will define genome as F/M, with subsequent effects on the defined CN/haplotyping of sex chromosomes. </td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`bias`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>bias</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
       <td style="border: 1px solid black; padding: 5px;">rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`nbias`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>nbias</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
       <td style="border: 1px solid black; padding: 5px;">rds of binned read depth bias for normal sample e.g. read depth for a random normal sample</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`snps`</td>
-      <td style="border: 1px solid black; padding: 5px;">`NULL`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>snps</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>NULL</code></td>
       <td style="border: 1px solid black; padding: 5px;">Optional comprehensive VCF of reference snps e.g. hapmap</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`unmappable`</td>
-      <td style="border: 1px solid black; padding: 5px;">`NULL`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>unmappable</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>NULL</code></td>
       <td style="border: 1px solid black; padding: 5px;">Optional .rds of GRanges of CN unmappable regions</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`coverage`</td>
-      <td style="border: 1px solid black; padding: 5px;">`60`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>coverage</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>60</code></td>
       <td style="border: 1px solid black; padding: 5px;">Target tumor base coverage</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`ncoverage`</td>
-      <td style="border: 1px solid black; padding: 5px;">`40`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>ncoverage</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>40</code></td>
       <td style="border: 1px solid black; padding: 5px;">Target normal base coverage</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`alpha`\
+      <td style="border: 1px solid black; padding: 5px;"><code>alpha</code>\
       (purity)</td>
-      <td style="border: 1px solid black; padding: 5px;">`1.00`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>1.00</code></td>
       <td style="border: 1px solid black; padding: 5px;">Target purity</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`tau`\
+      <td style="border: 1px solid black; padding: 5px;"><code>tau</code>\
       (ploidy)</td>
-      <td style="border: 1px solid black; padding: 5px;">`1.00`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>1.00</code></td>
       <td style="border: 1px solid black; padding: 5px;">Target ploidy</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`poisson`</td>
-      <td style="border: 1px solid black; padding: 5px;">`TRUE`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>poisson</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>TRUE</code></td>
       <td style="border: 1px solid black; padding: 5px;">Add shot noise to read depth?</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`numbreaks`</td>
-      <td style="border: 1px solid black; padding: 5px;">`10`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>numbreaks</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>10</code></td>
       <td style="border: 1px solid black; padding: 5px;">Number of additional breaks to add in CN-unmappable regions</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`width`</td>
-      <td style="border: 1px solid black; padding: 5px;">`1000`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>width</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>1000</code></td>
       <td style="border: 1px solid black; padding: 5px;">Bin width of read depth</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`cnloh`</td>
-      <td style="border: 1px solid black; padding: 5px;">`FALSE`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>cnloh</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>FALSE</code></td>
       <td style="border: 1px solid black; padding: 5px;">Add a copy-neutral loss of heterozygosity edge?</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`standard.chr`</td>
-      <td style="border: 1px solid black; padding: 5px;">`c(1:22, "X", "Y")`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>standard.chr</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>c(1:22, "X", "Y")</code></td>
       <td style="border: 1px solid black; padding: 5px;">Defaults to human chromosomes</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`outdir`</td>
-      <td style="border: 1px solid black; padding: 5px;">`./`</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>outdir</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>./</code></td>
       <td style="border: 1px solid black; padding: 5px;">Path to save</td>
     </tr>
     <tr>
-      <td style="border: 1px solid black; padding: 5px;">`par.path`</td>
-      <td style="border: 1px solid black; padding: 5px;">`system.file("extdata", "PAR_hg19.rds", package = 'ggSim')`</td>
-      <td style="border: 1px solid black; padding: 5px;">GRanges identifying pseudoautosomal regions in X, Y chromosomes. This is used to agnosticize the sex of the `bias`/`nbias` vectors.</td>
+      <td style="border: 1px solid black; padding: 5px;"><code>par.path</code></td>
+      <td style="border: 1px solid black; padding: 5px;"><code>system.file("extdata", "PAR_hg19.rds", package = 'ggSim')</code></td>
+      <td style="border: 1px solid black; padding: 5px;">GRanges identifying pseudoautosomal regions in X, Y chromosomes. This is used to agnosticize the sex of the <code>bias</code>/<code>nbias</code> vectors.</td>
     </tr>
   </tbody>
 </table>

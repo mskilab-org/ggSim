@@ -374,8 +374,7 @@ pre code {
 <code>ggsim</code> will create robust sex-informed, junction-balanced phased and unphased gGraphs with corresponding coverages that match the<br />
 user’s input purity and ploidy.</p>
 <p>The essential parameters to this function are <code>junctions</code>, <code>vcf</code>, <code>bias</code>, and <code>nbias</code>, and must be supplied.<br />
-<code>junctions</code> is a Junctions object, <code>vcf</code> defines the SNP profile for the sim genome, and <code>bias</code>/<code>nbias</code> represent the<br />
-normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth.   More details about function parameters are outlined in the table below.</p>
+<code>junctions</code> is a Junctions object, <code>vcf</code> defines the SNP profile for the sim genome, and <code>bias</code>/<code>nbias</code> represent the normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth. More details about function parameters are outlined in the table below.</p>
 <table style="border: 1px solid black; border-collapse: collapse;">
 <tbody>
 <tr>
@@ -399,181 +398,93 @@ Description/notes
 Junctions to add to gGraph as a GRangesList
 </td>
 </tr>
+</tbody>
+</table>
 <tr>
 <td style="border: 1px solid black; padding: 5px;">
+<pre>
 <code>vcf</code>
 </td>
-<td style="border: 1px solid black; padding: 5px;">
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Phased VCF of germline heterozygous SNPs. Can use any pileup of a genome or a <a href="https://github.com/Illumina/PlatinumGenomes">Platinum Genome from Illumina</a>.<br><br> <b>NOTE:</b> the sex of this input determines the sex of the simulated genome. Presence/absence of heterozygous SNPs will define genome as F/M, with subsequent effects on the defined CN/haplotyping of sex chromosomes.
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>bias</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>nbias</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-rds of binned read depth bias for normal sample e.g. read depth for a random normal sample
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>snps</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>NULL</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Optional comprehensive VCF of reference snps e.g. hapmap
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>unmappable</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>NULL</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Optional .rds of GRanges of CN unmappable regions
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>coverage</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>60</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Target tumor base coverage
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>ncoverage</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>40</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Target normal base coverage
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>alpha</code><br />
-(purity)
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>1.00</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Target purity
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>tau</code><br />
-(ploidy)
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>1.00</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Target ploidy
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>poisson</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>TRUE</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Add shot noise to read depth?
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>numbreaks</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>10</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Number of additional breaks to add in CN-unmappable regions
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>width</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>1000</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Bin width of read depth
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>cnloh</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>FALSE</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Add a copy-neutral loss of heterozygosity edge?
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>standard.chr</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>c(1:22, &quot;X&quot;, &quot;Y&quot;)</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Defaults to human chromosomes
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>outdir</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>./</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-Path to save
-</td>
-</tr>
-<tr>
-<td style="border: 1px solid black; padding: 5px;">
-<code>par.path</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-<code>system.file(&quot;extdata&quot;, &quot;PAR_hg19.rds&quot;, package = 'ggSim')</code>
-</td>
-<td style="border: 1px solid black; padding: 5px;">
-GRanges identifying pseudoautosomal regions in X, Y chromosomes. This is used to agnosticize the sex of the <code>bias</code>/<code>nbias</code> vectors.
-</td>
-</tr>
+<pre><code>  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Phased VCF of germline heterozygous SNPs. Can use any pileup of a genome or a [Platinum Genome from Illumina](https://github.com/Illumina/PlatinumGenomes).&lt;br&gt;&lt;br&gt; &lt;b&gt;NOTE:&lt;/b&gt; the sex of this input determines the sex of the simulated genome. Presence/absence of heterozygous SNPs will define genome as F/M, with subsequent effects on the defined CN/haplotyping of sex chromosomes. &lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`bias`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`nbias`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;rds of binned read depth bias for normal sample e.g. read depth for a random normal sample&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`snps`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`NULL`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Optional comprehensive VCF of reference snps e.g. hapmap&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`unmappable`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`NULL`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Optional .rds of GRanges of CN unmappable regions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`coverage`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`60`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Target tumor base coverage&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`ncoverage`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`40`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Target normal base coverage&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`alpha`\
+  (purity)&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`1.00`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Target purity&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`tau`\
+  (ploidy)&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`1.00`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Target ploidy&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`poisson`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`TRUE`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Add shot noise to read depth?&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`numbreaks`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`10`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Number of additional breaks to add in CN-unmappable regions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`width`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`1000`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Bin width of read depth&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`cnloh`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`FALSE`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Add a copy-neutral loss of heterozygosity edge?&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`standard.chr`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`c(1:22, &quot;X&quot;, &quot;Y&quot;)`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Defaults to human chromosomes&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`outdir`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`./`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;Path to save&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;&lt;pre&gt;`par.path`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;`system.file(&quot;extdata&quot;, &quot;PAR_hg19.rds&quot;, package = 'ggSim')`&lt;/td&gt;
+  &lt;td style=&quot;border: 1px solid black; padding: 5px;&quot;&gt;GRanges identifying pseudoautosomal regions in X, Y chromosomes. This is used to agnosticize the sex of the `bias`/`nbias` vectors.&lt;/td&gt;
+&lt;/tr&gt;</code></pre>
 </tbody>
 </table>
 </div>
