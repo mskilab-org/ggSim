@@ -24,12 +24,9 @@
 
 ## <font color=black> Tutorial </font>
 
-`ggsim` is the main function in this package to simulate a genome. Given a set of junctions and short-nucleotide polymorphisms, \
-`ggsim` will create robust sex-informed, junction-balanced phased and unphased gGraphs with corresponding coverages that match the \
-user's input purity and ploidy.   
+`ggsim` is the main function in this package to simulate a genome. Given a set of junctions and short-nucleotide polymorphisms, `ggsim` will create robust sex-informed, junction-balanced phased and unphased gGraphs with corresponding coverages that match the user's input purity and ploidy.   
 
-The essential parameters to this function are `junctions`, `vcf`, `bias`, and `nbias`, and must be supplied. \
-`junctions` is a Junctions object, `vcf` defines the SNP profile for the sim genome, and `bias`/`nbias</code> represent the normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth. More details about function parameters are outlined in the table below.
+The essential parameters to this function are `junctions`, `vcf`, `bias`, and `nbias`, and must be supplied. `junctions` is a Junctions object, `vcf` defines the SNP profile for the sim genome, and `bias`/`nbias` represent the normal coverage vectors multiplied to the tumor/normal coverage, respectively, to simulate real-world fluctuations in read depth. More details about function parameters are outlined in the table below.
 
 <table style="border: 1px solid black; border-collapse: collapse;">
   <tbody>
@@ -51,12 +48,12 @@ The essential parameters to this function are `junctions`, `vcf`, `bias`, and `n
     <tr>
       <td style="border: 1px solid black; padding: 5px;"><code>bias</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
-      <td style="border: 1px solid black; padding: 5px;">rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample</td>
+      <td style="border: 1px solid black; padding: 5px;">.rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample</td>
     </tr>
     <tr>
       <td style="border: 1px solid black; padding: 5px;"><code>nbias</code></td>
       <td style="border: 1px solid black; padding: 5px;"></td>
-      <td style="border: 1px solid black; padding: 5px;">rds of binned read depth bias for normal sample e.g. read depth for a random normal sample</td>
+      <td style="border: 1px solid black; padding: 5px;">.rds of binned read depth bias for normal sample e.g. read depth for a random normal sample</td>
     </tr>
     <tr>
       <td style="border: 1px solid black; padding: 5px;"><code>snps</code></td>

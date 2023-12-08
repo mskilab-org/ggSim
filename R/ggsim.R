@@ -7,12 +7,6 @@
 #' @import gTrack
 #' @import dplyr
 
-##enforce sex typing by input of the vcf
-## if you dont specify sex, let it choose randomly
-## look at the 
-## output to kyra the coverage without the bias vector added to it
-
-
 #' @name ggsim
 #' 
 #' @description function to simulate a gGraph complete with SNPs and junction phasing, and coverage
@@ -21,7 +15,6 @@
 #' @param vcf Phased VCF of germline hets
 #' @param bias rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample
 #' @param nbias rds of binned read depth bias for normal sample e.g. read depth for a random normal sample
-#' @param sex sex of sample e.g. M, F or if NULL, uses the sex of tbias vector 
 #' @param snps Optional comprehensive VCF of reference snps e.g. hapmap
 #' @param unmappable Optional .rds of GRanges of CN unmappable regions
 #' @param coverage target tumor base coverage
@@ -43,7 +36,6 @@ ggsim = function(junctions,
                  vcf,
                  bias,
                  nbias,
-                 sex.agnostic = F,
                  snp = NULL,
                  unmappable = NULL,
                  coverage,
@@ -82,17 +74,6 @@ ggsim = function(junctions,
   nbias$autosome = (nbias %^% par.file) | (gr2dt(nbias)$seqnames %in% c(1:22)) #tag (pseudo/)autosomal
   message('ingested and processed normal bias GRanges')
   
-  ####### determine sex of tumor and normal bias if not inputted based on tbias input
-  # if(is.null(sex)){
-  #   tbias.summary <- gr2dt(bias)[,.(mean.chr = mean(bias)), by = .(seqnames,autosome)]
-  #   nbias.summary <- gr2dt(nbias)[,.(mean.chr = mean(bias)), by = .(seqnames, autosome)]
-  #   ifelse(tbias.summary[seqnames == "X" & autosome == F]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
-  #   ifelse(nbias.summary[seqnames == "X" & autosome == F]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
-  #   if(tbias.sex != nbias.sex)
-  #     warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
-  #   sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing) 
-  # }
-  
   #make the haploid coverages diploid on the X and Y chromosome... this will matter for sim coverages later
   bias = gr2dt(bias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
   nbias = gr2dt(nbias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
@@ -119,6 +100,7 @@ ggsim = function(junctions,
   
   ## sex typing based on input vcf
   sex <- c("M", "F")[any(snps[seqnames(snps) == "X"]$het) %>% as.numeric() + 1]
+  message(sprintf("Your input vcf was determined to be %s. Sex of sim genome will be %s.", sex, sex))
   
   ## additional snps that are homozogyous REF in the reference sample may not be
   ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
@@ -148,24 +130,17 @@ ggsim = function(junctions,
   values(snps.A)[, "allele"] = copy(values(snps.A)[, "A"])
   values(snps.B)[, "allele"] = copy(values(snps.B)[, "B"])
   
-  ## only define A allele for male samples and get rid of Y for female samples
-  if(sex == "M") {
-    snps.B <- snps.B %Q% (!seqnames %in% c("X B", "Y B"))
-    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("X B", "Y B")]
-  } else if (sex == "F"){
-    snps.A <- snps.A %Q% (!seqnames %in% c("Y A"))
-    snps.B <- snps.B %Q% (!seqnames %in% c("Y B"))
-    seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A")]
-    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("Y B")]
-  }
+  #get rid of alleles based on sex
   hapsnps = grbind(snps.A, snps.B)
-  
-  
+  if(sex == "M"){
+    hapsnps = hapsnps %Q% (!seqnames %in% c("X B", "Y B"))
+    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("X B", "Y B")]
+  } else {
+    hapsnps = hapsnps %Q% (!seqnames %in% c("Y A", "Y B"))
+    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("Y A", "Y B")]}
+    
   ## make new haplotype seqlengths i.e. across A and B haplotypes
-  sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% 
-    as.data.table %>% 
-    cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
-  sl <- sl[names(sl) %in% seqlevels(hapsnps)] ## get rid of alleles based on seqlevels of hapsnps (sex-specific)
+  sl = seqlengths(hapsnps)
   
   jjhap = junctions
   if (length(junctions)) {
@@ -178,16 +153,17 @@ ggsim = function(junctions,
     #give NA junctions a unique cluster
     jj = jj$set(ecluster = ifelse(is.na(jj$dt$ecluster), max(c(0, jj$dt$ecluster), na.rm = TRUE) + 1:length(jj), jj$dt$ecluster)) 
 
+    chrom_allele = hapsnps %>% gr2dt %>% cc(.(seqnames)) %>% unique %>% transmute(chrom = gsub(" .*", "", seqnames), allele = gsub(".* ", "", seqnames))
+    
     ## now assign every ecluster and chromosome the same haplotype and jcn given some ploidy
     hapdt = (jj$grl %>% grl.unlist) %>% 
       gr2dt %>% 
       cc(.(seqnames, ecluster)) %>% 
-      unique %>% 
-      cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% 
-      mutate(hap = case_when(
-        seqnames %in% c("X", "Y", "chrX", "chrY") & sex == "M" ~ "A", #if male X or Y junction, assign it to A haplotype
-        T ~ hap #otherwise keep random assignment
-      )) %>%
+      unique %>%
+      cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>%
+      rowwise() %>%
+      mutate(hap = ifelse(!hap %in% chrom_allele[chrom == seqnames]$allele, "A", hap))%>%
+      data.table() %>%
       setkeyv(c('seqnames', 'ecluster'))
 
     hapdt$jcn = rexp(nrow(hapdt), rate = 2/tau) %>% ceiling
@@ -209,20 +185,13 @@ ggsim = function(junctions,
   }
   
   breaks = NULL
-  if (!is.null(unmappable))
-  {
+  if (!is.null(unmappable)) {
     CNun = unmappable %>% readRDS
-    seqlevels(CNun) <- seqlevels(CNun)[seqlevels(CNun) %in% standard.chr]
     CNun = rbind(gr2dt(CNun)[, seqnames := paste(seqnames, 'A')],
-                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
-    if(sex == "M") {
-      CNun <- CNun %Q% (!seqnames %in% c("X B", "Y B"))
-      seqlevels(CNun) = seqlevels(CNun)[!seqlevels(CNun) %in% c("X B", "Y B")]
-    } else {
-      CNun <- snps.A %Q% (!seqnames %in% c("Y A", "Y B"))
-      seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A", "Y B")]
-    }
-    breaks = gr.sample(CNun, numbreaks) ## sample some random unmappable breaks
+                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% 
+      dt2gr %Q% (seqnames %in% names(sl))
+    seqlevels(CNun) <- names(sl)
+    breaks = gr.sample(CNun, numbreaks)
   }
   
   #' #' zchoo Monday, Apr 25, 2022 11:19:38 AM
