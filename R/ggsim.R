@@ -20,12 +20,13 @@
 #' @param coverage target tumor base coverage
 #' @param ncoverage target normal base coverage
 #' @param alpha Target purity
-#' @param poisson add poisson noise
 #' @param tau Target ploidy
+#' @param poisson add poisson noise
 #' @param numbreaks number of additional breaks to provide in cn unmappable regions
 #' @param width Binwidth for binned read depth
 #' @param cnloh add a cnloh edge
-#' @param standard.chr simulate which chromosomes? DEFAULT = autosomes, X, Y
+#' @param standard.chr chromosomes to simulate
+#' @param par.path path to pseudoautosomal regions on X, Y chromosome
 #' @param outdir output directory
 #'
 #' @export
@@ -40,25 +41,29 @@ ggsim = function(junctions,
                  coverage,
                  ncoverage,
                  alpha,
-                 poisson,
                  tau,
+                 poisson = TRUE,
                  numbreaks,
-                 width,
-                 cnloh,
+                 width = 1000,
+                 cnloh = FALSE,
                  standard.chr = c(1:22, "X", "Y"),
-                 outdir)
+                 outdir,
+                 par.path = system.file("extdata", "PAR_hg19.rds", package = 'ggSim'))
 {
-  if (is.null(libdir) | (is.null(junctions)) | is.null(vcf) | is.null(bias)| is.null(nbias))
-  stop()
+  if (is.null(junctions) | is.null(vcf) | is.null(bias)| is.null(nbias))
+    stop("Check junctions, vcf, bias, nbias to ensure they are not empty inputs.")
   
   setDTthreads(1)
   
   system(paste('mkdir -p',  outdir))
   
+  par.file = par.path %>% readRDS()
+  
   bias = bias %>% readRDS %>% gr.nochr
   fn = names(values(bias))[1] ## take first column as value
   #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
   bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
+  bias$autosome = (bias %^% par.file) | (gr2dt(bias)$seqnames %in% c(1:22)) #tag (pseudo/)autosomal
   message('ingested and processed tumor bias GRanges')
   
   ## process second normal sample which will be used to simulate the normal depth
@@ -66,17 +71,12 @@ ggsim = function(junctions,
   fn = names(values(nbias))[1]
   #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
   nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
+  nbias$autosome = (nbias %^% par.file) | (gr2dt(nbias)$seqnames %in% c(1:22)) #tag (pseudo/)autosomal
   message('ingested and processed normal bias GRanges')
   
-  ####### determine sex of tumor and normal bias
-  tbias.summary <- gr2dt(bias)[,.(mean.chr = mean(bias)), by = seqnames]
-  nbias.summary <- gr2dt(nbias)[,.(mean.chr = mean(bias)), by = seqnames]
-  ifelse(tbias.summary[seqnames == "X"]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
-  ifelse(nbias.summary[seqnames == "X"]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
-  sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing)
-  
-  if(tbias.sex != nbias.sex)
-    warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
+  #make the haploid coverages diploid on the X and Y chromosome... this will matter for sim coverages later
+  bias = gr2dt(bias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
+  nbias = gr2dt(nbias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
   
   message('Loading phased SNPs')
   snps  = read_vcf(vcf, geno = TRUE)
@@ -97,6 +97,10 @@ ggsim = function(junctions,
   snps = snps %Q% (seqnames %in% standard.chr)
   seqlevels(snps) <- seqlevels(snps)[seqlevels(snps) %in% standard.chr]
   message('ingested junctions and phased SNPs')
+  
+  ## sex typing based on input vcf
+  sex <- c("M", "F")[any(snps[seqnames(snps) == "X"]$het) %>% as.numeric() + 1]
+  message(sprintf("Your input vcf was determined to be %s. Sex of sim genome will be %s.", sex, sex))
   
   ## additional snps that are homozogyous REF in the reference sample may not be
   ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
@@ -126,29 +130,20 @@ ggsim = function(junctions,
   values(snps.A)[, "allele"] = copy(values(snps.A)[, "A"])
   values(snps.B)[, "allele"] = copy(values(snps.B)[, "B"])
   
-  ## only define A allele for male samples and get rid of Y for female samples
-  if(sex == "M") {
-    snps.B <- snps.B %Q% (!seqnames %in% c("X B", "Y B"))
-    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("X B", "Y B")]
-  } else {
-    snps.A <- snps.A %Q% (!seqnames %in% c("Y A"))
-    snps.B <- snps.B %Q% (!seqnames %in% c("Y B"))
-    seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A")]
-    seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("Y B")]
-  }
+  #get rid of alleles based on sex
   hapsnps = grbind(snps.A, snps.B)
-  
-  
+  if(sex == "M"){
+    hapsnps = hapsnps %Q% (!seqnames %in% c("X B", "Y B"))
+    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("X B", "Y B")]
+  } else {
+    hapsnps = hapsnps %Q% (!seqnames %in% c("Y A", "Y B"))
+    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("Y A", "Y B")]}
+    
   ## make new haplotype seqlengths i.e. across A and B haplotypes
-  sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% 
-    as.data.table %>% 
-    filter() %>%
-    cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
-  sl <- sl[names(sl) %in% seqlevels(hapsnps)] ## get rid of alleles based on seqlevels of hapsnps (sex-specific)
+  sl = seqlengths(hapsnps)
   
   jjhap = junctions
-  if (length(junctions))
-  {
+  if (length(junctions)) {
     ## initial graph to make eclusters
     igg = gG(junctions = junctions)
     igg$eclusters(thresh = 1e5)
@@ -158,16 +153,17 @@ ggsim = function(junctions,
     #give NA junctions a unique cluster
     jj = jj$set(ecluster = ifelse(is.na(jj$dt$ecluster), max(c(0, jj$dt$ecluster), na.rm = TRUE) + 1:length(jj), jj$dt$ecluster)) 
 
+    chrom_allele = hapsnps %>% gr2dt %>% cc(.(seqnames)) %>% unique %>% transmute(chrom = gsub(" .*", "", seqnames), allele = gsub(".* ", "", seqnames))
+    
     ## now assign every ecluster and chromosome the same haplotype and jcn given some ploidy
     hapdt = (jj$grl %>% grl.unlist) %>% 
       gr2dt %>% 
       cc(.(seqnames, ecluster)) %>% 
-      unique %>% 
-      cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>% 
-      mutate(hap = case_when(
-        seqnames %in% c("X", "Y", "chrX", "chrY") & sex == "M" ~ "A", #if male X or Y junction, assign it to A haplotype
-        T ~ hap #otherwise keep random assignment
-      )) %>%
+      unique %>%
+      cc(hap := sample(c('A', 'B'), .N, replace = TRUE), by = .(seqnames, ecluster)) %>%
+      rowwise() %>%
+      mutate(hap = ifelse(!hap %in% chrom_allele[chrom == seqnames]$allele, "A", hap))%>%
+      data.table() %>%
       setkeyv(c('seqnames', 'ecluster'))
 
     hapdt$jcn = rexp(nrow(hapdt), rate = 2/tau) %>% ceiling
@@ -189,20 +185,13 @@ ggsim = function(junctions,
   }
   
   breaks = NULL
-  if (!is.null(unmappable))
-  {
+  if (!is.null(unmappable)) {
     CNun = unmappable %>% readRDS
-    seqlevels(CNun) <- seqlevels(CNun)[seqlevels(CNun) %in% standard.chr]
     CNun = rbind(gr2dt(CNun)[, seqnames := paste(seqnames, 'A')],
-                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
-    if(sex == "M") {
-      CNun <- CNun %Q% (!seqnames %in% c("X B", "Y B"))
-      seqlevels(CNun) = seqlevels(CNun)[!seqlevels(CNun) %in% c("X B", "Y B")]
-    } else {
-      CNun <- snps.A %Q% (!seqnames %in% c("Y A", "Y B"))
-      seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A", "Y B")]
-    }
-    breaks = gr.sample(CNun, numbreaks) ## sample some random unmappable breaks
+                gr2dt(CNun)[, seqnames := paste(seqnames, 'B')]) %>% 
+      dt2gr %Q% (seqnames %in% names(sl))
+    seqlevels(CNun) <- names(sl)
+    breaks = gr.sample(CNun, numbreaks)
   }
   
   #' #' zchoo Monday, Apr 25, 2022 11:19:38 AM
@@ -437,7 +426,7 @@ ggsim = function(junctions,
 #' @description
 #'
 #' @param gr input gRanges on which to simulate coverage (requires field 'cn')
-#' @param binsize pon10 <- "/gpfs/commons/home/sbrylka/Projects/sb_dryclean/blacklist/pon_generation/pon_generation/whole_10/pon.rds"
+#' @param binsize
 #' @param bins 
 #' @param bias granges of biases for given regions, first field is assumed to be the bias amount
 #' @param diploid 
@@ -488,8 +477,7 @@ ggsim = function(junctions,
     bins$cov = bins$cov/mean(bins$cov, na.rm = TRUE)
   
   
-  if (!is.null(bias))
-  {
+  if (!is.null(bias)) {
     values(bias)[[1]] = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
     bins$cov.og = bins$cov
     ##bins$cov = bins$cov * values(bins[, c()] %$% bias[, 1])[[1]] ## made this immune to NA for targeted seq (Addy)
@@ -507,10 +495,6 @@ ggsim = function(junctions,
 #' @param new 
 #' @param sep 
 #' @param perl 
-#'
-#' @return
-#'
-#' @examples
 .separate = function(dt, old, new, sep, perl = FALSE)
 {
   newdt = dt[[old]] %>% 
