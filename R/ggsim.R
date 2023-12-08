@@ -7,6 +7,12 @@
 #' @import gTrack
 #' @import dplyr
 
+##enforce sex typing by input of the vcf
+## if you dont specify sex, let it choose randomly
+## look at the 
+## output to kyra the coverage without the bias vector added to it
+
+
 #' @name ggsim
 #' 
 #' @description function to simulate a gGraph complete with SNPs and junction phasing, and coverage
@@ -15,17 +21,19 @@
 #' @param vcf Phased VCF of germline hets
 #' @param bias rds of binned read depth bias for tumor sample e.g. read depth for a random normal sample
 #' @param nbias rds of binned read depth bias for normal sample e.g. read depth for a random normal sample
+#' @param sex sex of sample e.g. M, F or if NULL, uses the sex of tbias vector 
 #' @param snps Optional comprehensive VCF of reference snps e.g. hapmap
 #' @param unmappable Optional .rds of GRanges of CN unmappable regions
 #' @param coverage target tumor base coverage
 #' @param ncoverage target normal base coverage
 #' @param alpha Target purity
-#' @param poisson add poisson noise
 #' @param tau Target ploidy
+#' @param poisson add poisson noise
 #' @param numbreaks number of additional breaks to provide in cn unmappable regions
 #' @param width Binwidth for binned read depth
 #' @param cnloh add a cnloh edge
-#' @param standard.chr simulate which chromosomes? DEFAULT = autosomes, X, Y
+#' @param standard.chr chromosomes to simulate
+#' @param par.path path to pseudoautosomal regions on X, Y chromosome
 #' @param outdir output directory
 #'
 #' @export
@@ -35,22 +43,23 @@ ggsim = function(junctions,
                  vcf,
                  bias,
                  nbias,
+                 sex.agnostic = F,
                  snp = NULL,
                  unmappable = NULL,
                  coverage,
                  ncoverage,
                  alpha,
-                 poisson,
                  tau,
+                 poisson = TRUE,
                  numbreaks,
-                 width,
-                 cnloh,
+                 width = 1000,
+                 cnloh = FALSE,
                  standard.chr = c(1:22, "X", "Y"),
                  outdir,
                  par.path = system.file("extdata", "PAR_hg19.rds", package = 'ggSim'))
 {
-  if (is.null(libdir) | (is.null(junctions)) | is.null(vcf) | is.null(bias)| is.null(nbias))
-  stop()
+  if (is.null(junctions) | is.null(vcf) | is.null(bias)| is.null(nbias))
+    stop("Check junctions, vcf, bias, nbias to ensure they are not empty inputs.")
   
   setDTthreads(1)
   
@@ -58,13 +67,11 @@ ggsim = function(junctions,
   
   par.file = par.path %>% readRDS()
   
-  bias = opt$bias
-  nbias = opt$nbias
   bias = bias %>% readRDS %>% gr.nochr
   fn = names(values(bias))[1] ## take first column as value
   #bias = bias %>% rebin(field = fn, 1e4) ## smooth out across 10kb temporarily silenced, addy
   bias$bias = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
-  bias$par = (bias %^% par.file) | (gr2dt(bias)$seqnames %in% c(1:22))
+  bias$autosome = (bias %^% par.file) | (gr2dt(bias)$seqnames %in% c(1:22)) #tag (pseudo/)autosomal
   message('ingested and processed tumor bias GRanges')
   
   ## process second normal sample which will be used to simulate the normal depth
@@ -72,24 +79,23 @@ ggsim = function(junctions,
   fn = names(values(nbias))[1]
   #nbias = nbias %>% rebin(field = fn, 1e4)#temporarily silenced, addy
   nbias$bias = values(nbias)[[1]]/mean(values(nbias)[[1]], na.rm = TRUE)
-  nbias$par = (nbias %^% par.file) | (gr2dt(nbias)$seqnames %in% c(1:22))
+  nbias$autosome = (nbias %^% par.file) | (gr2dt(nbias)$seqnames %in% c(1:22)) #tag (pseudo/)autosomal
   message('ingested and processed normal bias GRanges')
   
-  ####### determine sex of tumor and normal bias
-  tbias.summary <- gr2dt(bias)[,.(mean.chr = mean(bias)), by = seqnames]
-  nbias.summary <- gr2dt(nbias)[,.(mean.chr = mean(bias)), by = seqnames]
-  ifelse(tbias.summary[seqnames == "X"]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
-  ifelse(nbias.summary[seqnames == "X"]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
-  sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing)
+  ####### determine sex of tumor and normal bias if not inputted based on tbias input
+  # if(is.null(sex)){
+  #   tbias.summary <- gr2dt(bias)[,.(mean.chr = mean(bias)), by = .(seqnames,autosome)]
+  #   nbias.summary <- gr2dt(nbias)[,.(mean.chr = mean(bias)), by = .(seqnames, autosome)]
+  #   ifelse(tbias.summary[seqnames == "X" & autosome == F]$mean.chr < 0.60, tbias.sex <- "M", tbias.sex <- "F")
+  #   ifelse(nbias.summary[seqnames == "X" & autosome == F]$mean.chr < 0.60, nbias.sex <- "M", nbias.sex < "F")
+  #   if(tbias.sex != nbias.sex)
+  #     warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
+  #   sex = tbias.sex #use the tbias.sex as the sex of the entire simulation (used for subsequent allelic phasing) 
+  # }
   
   #make the haploid coverages diploid on the X and Y chromosome... this will matter for sim coverages later
-  if (tbias.sex == "M")
-    bias = gr2dt(bias)[par == F, bias := bias * 2] %>% dt2gr()
-  if (nbias.sex == "M")
-    nbias = gr2dt(nbias)[par == F, bias := bias * 2] %>% dt2gr()
-  
-  if(tbias.sex != nbias.sex)
-    warning(sprintf("Your tumor bias (sex: %s) and normal bias (sex: %s) are sex mismatched", tbias.sex, nbias.sex))
+  bias = gr2dt(bias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
+  nbias = gr2dt(nbias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
   
   message('Loading phased SNPs')
   snps  = read_vcf(vcf, geno = TRUE)
@@ -110,6 +116,9 @@ ggsim = function(junctions,
   snps = snps %Q% (seqnames %in% standard.chr)
   seqlevels(snps) <- seqlevels(snps)[seqlevels(snps) %in% standard.chr]
   message('ingested junctions and phased SNPs')
+  
+  ## sex typing based on input vcf
+  sex <- c("M", "F")[any(snps[seqnames(snps) == "X"]$het) %>% as.numeric() + 1]
   
   ## additional snps that are homozogyous REF in the reference sample may not be
   ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
@@ -143,7 +152,7 @@ ggsim = function(junctions,
   if(sex == "M") {
     snps.B <- snps.B %Q% (!seqnames %in% c("X B", "Y B"))
     seqlevels(snps.B) = seqlevels(snps.B)[!seqlevels(snps.B) %in% c("X B", "Y B")]
-  } else {
+  } else if (sex == "F"){
     snps.A <- snps.A %Q% (!seqnames %in% c("Y A"))
     snps.B <- snps.B %Q% (!seqnames %in% c("Y B"))
     seqlevels(snps.A) = seqlevels(snps.A)[!seqlevels(snps.A) %in% c("Y A")]
@@ -155,13 +164,11 @@ ggsim = function(junctions,
   ## make new haplotype seqlengths i.e. across A and B haplotypes
   sl = expand.grid(sl = seqlevels(snps), hap = c('A', 'B')) %>% 
     as.data.table %>% 
-    filter() %>%
     cc(structure(seqlengths(snps)[sl], names = paste(sl, hap)))
   sl <- sl[names(sl) %in% seqlevels(hapsnps)] ## get rid of alleles based on seqlevels of hapsnps (sex-specific)
   
   jjhap = junctions
-  if (length(junctions))
-  {
+  if (length(junctions)) {
     ## initial graph to make eclusters
     igg = gG(junctions = junctions)
     igg$eclusters(thresh = 1e5)
@@ -450,7 +457,7 @@ ggsim = function(junctions,
 #' @description
 #'
 #' @param gr input gRanges on which to simulate coverage (requires field 'cn')
-#' @param binsize pon10 <- "/gpfs/commons/home/sbrylka/Projects/sb_dryclean/blacklist/pon_generation/pon_generation/whole_10/pon.rds"
+#' @param binsize
 #' @param bins 
 #' @param bias granges of biases for given regions, first field is assumed to be the bias amount
 #' @param diploid 
@@ -501,8 +508,7 @@ ggsim = function(junctions,
     bins$cov = bins$cov/mean(bins$cov, na.rm = TRUE)
   
   
-  if (!is.null(bias))
-  {
+  if (!is.null(bias)) {
     values(bias)[[1]] = values(bias)[[1]]/mean(values(bias)[[1]], na.rm = TRUE)
     bins$cov.og = bins$cov
     ##bins$cov = bins$cov * values(bins[, c()] %$% bias[, 1])[[1]] ## made this immune to NA for targeted seq (Addy)
@@ -520,10 +526,6 @@ ggsim = function(junctions,
 #' @param new 
 #' @param sep 
 #' @param perl 
-#'
-#' @return
-#'
-#' @examples
 .separate = function(dt, old, new, sep, perl = FALSE)
 {
   newdt = dt[[old]] %>% 
