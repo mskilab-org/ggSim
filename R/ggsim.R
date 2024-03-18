@@ -86,13 +86,14 @@ ggsim = function(junctions,
   snps  = skidb::read_vcf(vcf, geno = TRUE, verbose = TRUE)
   fn = rev(names(values(snps)))[1]
   snps = snps[lengths(snps$ALT)==1] ## remove multiallelic
+  snps = snps[lengths(snps$REF)==1]
   snps$ALT = unstrsplit(snps$ALT)
-  snps = snps %Q% (Biostrings::nchar(REF) == 1 && Biostrings::nchar(ALT) == 1)
+  snps$REF = unstrsplit(snps$REF)
   snps = snps[, c('REF', 'ALT', fn)] %>% as.data.frame %>% .separate(fn, c('A', 'B'), '\\|') %>% dt2gr %>% gr.sub
-  if (grepl("rds$", junctions)) {
-    junctions = jJ(readRDS(junctions))
+  if (grepl("rds$", opt$junctions)) {
+    junctions = jJ(readRDS(opt$junctions))
   } else {
-    junctions = jJ(junctions)
+    junctions = jJ(opt$junctions)
   }
   snps$het = snps$A != snps$B
   snpmat = values(snps)[, c('REF', 'ALT')] %>% as.matrix
@@ -101,7 +102,7 @@ ggsim = function(junctions,
   snps = snps %Q% (seqnames %in% standard.chr)
   seqlevels(snps) <- seqlevels(snps)[seqlevels(snps) %in% standard.chr]
   message('ingested junctions and phased SNPs')
-  
+    
   ## sex typing based on input vcf
   sex <- c("M", "F")[any(snps[seqnames(snps) == "X"]$het) %>% as.numeric() + 1]
   message(sprintf("Your input vcf was determined to be %s. Sex of sim genome will be %s.", sex, sex))
@@ -111,8 +112,10 @@ ggsim = function(junctions,
   if (!is.null(snp)){
     allsnps = read_vcf(snp)
     allsnps = allsnps[lengths(allsnps$ALT)==1] ## remove multiallelic
+    allsnps = allsnps[lengths(allsnps$REF)==1] ## remove multiallelic
     allsnps$ALT = unstrsplit(allsnps$ALT)
-    allsnps = allsnps[Biostrings::nchar(allsnps$REF)==1 & Biostrings::nchar(allsnps$ALT) == 1] ## keep only SNPs
+    allsnps$REF = unstrsplit(allsnps$REF)
+                                        #allsnps = allsnps[Biostrings::nchar(allsnps$REF)==1 & Biostrings::nchar(allsnps$ALT) == 1] ## keep only SNPs
     othersnps = allsnps[!(allsnps %^% snps)][, c('REF', 'ALT')]
     othersnps$A = othersnps$B = othersnps$REF
     othersnps$het = FALSE
@@ -168,12 +171,11 @@ ggsim = function(junctions,
       data.table() %>%
       setkeyv(c('seqnames', 'ecluster'))
 
-    hapdt$jcn = rexp(nrow(hapdt), rate = 2/tau) %>% ceiling
+    hapdt$jcn = rexp(nrow(hapdt), rate = 2/opt$tau) %>% ceiling
     jj$set(hap1 = hapdt[.(seqnames(jj$left) %>% as.character, jj$dt$ecluster), hap])
     jj$set(hap2 = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), hap])
     jj$set(cn = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), jcn])
-    
-    
+        
     ## now lift junctions into haplotype coordinates
     left = jj$left %>% gr2dt 
     left$hap = jj$dt$hap1
@@ -317,12 +319,15 @@ ggsim = function(junctions,
   
   ## now sample from ggb and ggd to get total and het coverage
 
+  bins.ranges = bias
+  mcols(bins.ranges) <- NULL
   cov = simulate_coverage(gr = ggd$nodes$gr,
                           purity = alpha,
                           basecov = coverage,
                           binsize = width,
                           normalize = F,
                           bias = bias[,'bias'],
+                          bins = bins.ranges,
                           poisson = poisson)
   tmpgr = ggd$nodes$gr; tmpgr$cn = 2
   ncov = simulate_coverage(gr = ggd$nodes$gr, 
@@ -331,6 +336,7 @@ ggsim = function(junctions,
                            normalize = FALSE,
                            binsize = width,
                            bias = nbias[, 'bias'],
+                           bins = bins.ranges,
                            poisson = poisson)
   
   ## final output binned coverage
@@ -468,8 +474,8 @@ ggsim = function(junctions,
 #'
 #' @export
 simulate_coverage = function(gr, ##needs field cn
-                             bins = NULL,
                              binsize = 1000,
+                             bins = gr.tile(seqlengths(gr), binsize),
                              diploid = TRUE,
                              bias = NULL,
                              basecov = 60,
@@ -491,12 +497,13 @@ simulate_coverage = function(gr, ##needs field cn
   binsize = unique(width(bins))[1]
   
   ## compute expected bin coverage
-  bincov = (basecov * (readsize + binsize - 1)) / readsize
+  ##bincov = (basecov * (readsize + binsize - 1)) / readsize
   
   ## get expected normal cn
   ncn = 1
   if (diploid) { ncn = 2 }
   
+  bins$bincov = basecov*(readsize+width(bins) - 1) / readsize  
   ## compute relative CN
   GenomicRanges::mcols(bins)[, "cn"] = gUtils::gr.val(query = bins,
                                                       target = gr,
