@@ -6,6 +6,7 @@
 #' @import skidb
 #' @import gTrack
 #' @import dplyr
+#' @importMethodsFrom GenomicRanges as.data.frame
 
 #' @name ggsim
 #' 
@@ -56,7 +57,10 @@ ggsim = function(junctions,
   setDTthreads(1)
   
   system(paste('mkdir -p',  outdir))
-  
+
+  if (!is.null(unmappable))
+    CNun = unmappable %>% readRDS
+
   par.file = par.path %>% readRDS()
   
   bias = bias %>% readRDS %>% gr.nochr
@@ -75,15 +79,15 @@ ggsim = function(junctions,
   message('ingested and processed normal bias GRanges')
   
   #make the haploid coverages diploid on the X and Y chromosome... this will matter for sim coverages later
-  bias = gr2dt(bias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
-  nbias = gr2dt(nbias)[, bias := bias / mean(bias), by = .(autosome, seqnames)] %>% dt2gr
+  bias = gr2dt(bias)[seqnames %in% c("X", "Y"), bias := ifelse(bias == 0, 0, bias / mean(bias)), by = .(autosome, seqnames)] %>% dt2gr
+  nbias = gr2dt(nbias)[seqnames %in% c("X", "Y"), bias := ifelse(bias == 0, 0, bias / mean(bias)), by = .(autosome, seqnames)] %>% dt2gr
   
   message('Loading phased SNPs')
-  snps  = read_vcf(vcf, geno = TRUE)
+  snps  = skidb::read_vcf(vcf, geno = TRUE, verbose = TRUE)
   fn = rev(names(values(snps)))[1]
   snps = snps[lengths(snps$ALT)==1] ## remove multiallelic
   snps$ALT = unstrsplit(snps$ALT)
-  snps = snps[nchar(snps$REF)==1 & nchar(snps$ALT) == 1]
+  snps = snps %Q% (Biostrings::nchar(REF) == 1 && Biostrings::nchar(ALT) == 1)
   snps = snps[, c('REF', 'ALT', fn)] %>% as.data.frame %>% .separate(fn, c('A', 'B'), '\\|') %>% dt2gr %>% gr.sub
   if (grepl("rds$", junctions)) {
     junctions = jJ(readRDS(junctions))
@@ -102,13 +106,13 @@ ggsim = function(junctions,
   sex <- c("M", "F")[any(snps[seqnames(snps) == "X"]$het) %>% as.numeric() + 1]
   message(sprintf("Your input vcf was determined to be %s. Sex of sim genome will be %s.", sex, sex))
   
-  ## additional snps that are homozogyous REF in the reference sample may not be
-  ## present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
+  #additional snps that are homozogyous REF in the reference sample may not be
+  #present in the phased VCF, so we can pull these from a reference DB e.g. hapmap
   if (!is.null(snp)){
     allsnps = read_vcf(snp)
     allsnps = allsnps[lengths(allsnps$ALT)==1] ## remove multiallelic
     allsnps$ALT = unstrsplit(allsnps$ALT)
-    allsnps = allsnps[nchar(allsnps$REF)==1 & nchar(allsnps$ALT) == 1] ## keep only SNPs
+    allsnps = allsnps[Biostrings::nchar(allsnps$REF)==1 & Biostrings::nchar(allsnps$ALT) == 1] ## keep only SNPs
     othersnps = allsnps[!(allsnps %^% snps)][, c('REF', 'ALT')]
     othersnps$A = othersnps$B = othersnps$REF
     othersnps$het = FALSE
@@ -134,11 +138,9 @@ ggsim = function(junctions,
   hapsnps = grbind(snps.A, snps.B)
   if(sex == "M"){
     hapsnps = hapsnps %Q% (!seqnames %in% c("X B", "Y B"))
-    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("X B", "Y B")]
-  } else {
-    hapsnps = hapsnps %Q% (!seqnames %in% c("Y A", "Y B"))
+    seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("X B", "Y B")] } else { hapsnps = hapsnps %Q% (!seqnames %in% c("Y A", "Y B"))
     seqlevels(hapsnps) = seqlevels(hapsnps)[!seqlevels(hapsnps) %in% c("Y A", "Y B")]}
-    
+      
   ## make new haplotype seqlengths i.e. across A and B haplotypes
   sl = seqlengths(hapsnps)
   
@@ -170,12 +172,19 @@ ggsim = function(junctions,
     jj$set(hap1 = hapdt[.(seqnames(jj$left) %>% as.character, jj$dt$ecluster), hap])
     jj$set(hap2 = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), hap])
     jj$set(cn = hapdt[.(seqnames(jj$right) %>% as.character, jj$dt$ecluster), jcn])
-
+    
+    
     ## now lift junctions into haplotype coordinates
-    left = jj$left %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap1)) %>% dt2gr(seqlengths = sl)
-    right = jj$right %>% gr2dt %>% cc(seqnames := paste(seqnames, jj$dt$hap2)) %>% dt2gr(seqlengths = sl)
-    hapgrl = split(grbind(left, right), rep(1:length(left), 2))
-    values(hapgrl) = jj$dt
+    left = jj$left %>% gr2dt 
+    left$hap = jj$dt$hap1
+    left = left %>% cc(seqnames := paste(seqnames, hap)) %>% dt2gr(seqlengths = sl)
+    #%>% mutate(seqnames = paste(seqnames, left.hap)) %>% dt2gr(seqlengths = sl)
+    right = jj$right %>% gr2dt 
+    right$hap = jj$dt$hap2
+    right = right %>% cc(seqnames := paste(seqnames, hap)) %>% dt2gr(seqlengths = sl)
+    hapgrl = GenomicRanges::split(grbind(left, right), rep(1:length(left), 2))
+    #hapgrl@metadata <- jj$dt
+    values(hapgrl) <- jj$dt
     jjhap = jJ(hapgrl)
     message('assigned junctions to germline haplotypes')
 
@@ -251,7 +260,7 @@ ggsim = function(junctions,
   #'   jjhap = c(jjhap, jjcnloh)
   #' }
  
-  gg = gG(junctions = jjhap, breaks = breaks, genome = sl)
+  gg = gG(junctions = jjhap, breaks = breaks)
   gg$nodes$mark(cn = tau/2)
   
   #' ## if using cnloh we will need to fix some nodes
@@ -264,12 +273,17 @@ ggsim = function(junctions,
   #'   gg$nodes[node.id == n2]$mark(ub = ceiling(opt$tau/2), lb = ceiling(opt$tau/2))
   #' }
   
-  gg$nodes$mark(weight = 0.1*gg$nodes$dt$width/1e6)
+  gg$nodes$mark(weight = gg$nodes$dt$width/1e7)
   message('built basic graph from junctions and copy number breaks')
 
   #' ## fitted haplotype graph, where every provided alt edge is given some nonzero copy number
   #' saveRDS(gg, paste0(outdir, '/tmp.gg.rds'))
-  ggb = balance(gg, lambda = 10000, epgap = 1e-6, ism = FALSE, verbose = 2, tilim = 600)
+  ggb = balance(gg, 
+                lambda = 10000, 
+                epgap = 1e-6, 
+                ism = FALSE, 
+                verbose = 2, 
+                tilim = 600)
   ggb$nodes$mark(hap = gg$nodes$dt$seqnames %>% as.character %>% strsplit(' ') %>% sapply('[', 2))
   message('balanced phased graph constraining all junctions to be incorporated yielding diploid ploidy ', gGnome:::ploidy(ggb) %>% signif(3))
  
@@ -278,7 +292,11 @@ ggsim = function(junctions,
   ## there should be two nodes per haploid coordinate here
   ## lift phased graph to haploid coordinates
   ## use just the final space?
-  nodes = ggb$nodes$gr %>% gr2dt %>% .separate(old = 'seqnames', sep = ' (?=[^ ]+$)', new = c('seqnames', 'hap'), perl = TRUE) %>% dt2gr
+  nodes = ggb$nodes$gr %>% gr2dt %>% .separate(old = 'seqnames', 
+                                               sep = ' (?=[^ ]+$)', 
+                                               new = c('seqnames', 'hap'), 
+                                               perl = TRUE) %>%
+    dt2gr
   ## ggl = gG(nodes = nodes, edges = ggb$edges$dt) %>% gGnome:::loosefix ## pipe and ":::" not playing nice
   ggl = gGnome:::loosefix(gG(nodes = nodes, edges = ggb$edges$dt))
   ggl$edges$mark(type = ifelse(ggl$edges$class == 'REF', 'REF', 'ALT'))
@@ -299,27 +317,21 @@ ggsim = function(junctions,
   
   ## now sample from ggb and ggd to get total and het coverage
 
-  cov = .simcov(ggd$nodes$gr, 
-                purity = alpha, 
-                basecov = coverage, 
-                binsize = width, 
-                normalize = FALSE, 
-                bias = bias[, 'bias'], 
-                poisson = poisson)
-  #cov %>% gTrack(y.field = c("cn", "cov")) -> a
-  # bias %>% gTrack(y.field = c('bias')) -> b
-  # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
+  cov = simulate_coverage(gr = ggd$nodes$gr,
+                          purity = alpha,
+                          basecov = coverage,
+                          binsize = width,
+                          normalize = F,
+                          bias = bias[,'bias'],
+                          poisson = poisson)
   tmpgr = ggd$nodes$gr; tmpgr$cn = 2
-  ncov = .simcov(tmpgr, 
-                 purity = 1, 
-                 basecov = ncoverage, 
-                 normalize = FALSE, 
-                 binsize = width, 
-                 bias = nbias[, 'bias'], 
-                 poisson = poisson)
-  # ncov %>% gTrack(y.field = c("cn", "cov")) -> a
-  # nbias %>% gTrack(y.field = c('bias'), ylab = "nbias") -> b
-  # c(a,b)%>% plot(c("1", "X")) %>% skitools::ppdf()
+  ncov = simulate_coverage(gr = ggd$nodes$gr, 
+                           purity = 1,
+                           basecov = ncoverage,
+                           normalize = FALSE,
+                           binsize = width,
+                           bias = nbias[, 'bias'],
+                           poisson = poisson)
   
   ## final output binned coverage
   outcov = cov
@@ -340,12 +352,12 @@ ggsim = function(junctions,
   ## hapbias = rbind(as.data.table(bias)[, seqnames := paste(seqnames, 'A')],
   ##                 as.data.table(bias)[, seqnames := paste(seqnames, 'B')]) %>% dt2gr
 
-  hapsnpcov = .simcov(ggb$nodes$gr, 
-                      bins = hapsnps, 
-                      bias = hapbias, 
-                      diploid = FALSE, 
-                      basecov = coverage/2, 
-                      normalize = FALSE)
+  hapsnpcov = simulate_coverage(gr = ggb$nodes$gr,
+                                bins = hapsnps,                      
+                                bias = hapbias,
+                                diploid = FALSE,
+                                basecov = coverage/2,
+                                normalize = FALSE)
   hapsnpcov$count = round(hapsnpcov$cov)
 
   ## now populate snps
@@ -419,6 +431,114 @@ ggsim = function(junctions,
   saveRDS(gt, paste0(outdir, '/gt.rds'))
   message('dumped out files and finished')
   
+}
+
+
+#' @name simulate_coverage
+#' @title simulate_coverage
+#'
+#' @description
+#' simulate binned read counts given expected depth
+#'
+#' @details
+#' Given a genomic segments with estimated tumor copy number (CN) and genomic bin size, simulate read counts per genomic bin.
+#' This can be done for either a diploid genome (diploid = TRUE) or haploid genome (haploid = TRUE).
+#'
+#' Optionally, a multiplicative bias (representing replication timing, batch effect, etc.) can be supplied to make the coverage appear more realistic.
+#' This should be supplied as a GRanges as a numeric vector in field "background" (or some other field specified in bias.field)
+#' 
+#' The expected coverage and read size can be tuned by setting basecov and readsize, respectively.
+#'
+#' By default, read counts are simulated from a Poisson distribution, but if overdispersion (numeric) is supplied will simulate from a Negative Binomial distribution.
+#'
+#' @param gr (GRanges, gGraph, or file containing one of these things) segment copy number, with numeric cn supplied in field "cn"
+#' @param bins (GRanges) genomic bins
+#' @param binsize (numeric) width of genomic bins (bp) for simulating read counts. ignored if bins if supplied. default 1e3.
+#' @param diploid (logical) simulate diploid genome? default TRUE
+#' @param bias (GRanges) mulitplicative bias for binned means
+#' @param bias.field (character) column in bias GRanges metadata containing multiplicative bias. default "background"
+#' @param basecov (numeric) expected coverage depth. default 60.
+#' @param readsize (numeric) expected read size (bp). default 150.
+#' @param purity (numeric) sample purity, between zero and one. default 0.95.
+#' @param poisson (numeric) simulate actual integer reads? if NA will just output relative copy number.
+#' @param overdispersion (numeric) if supplied, should be > 1 and will be applied to simulate from a negative binomial distribution. default NA.
+#' @param normalize (logical) unit normalize resulting reads by dividing by mean? default TRUE
+#
+#' @return GRanges with coverage per genomic bin in field "cov" and pre-bias coverage per genomic bin in field "cov.og"
+#'
+#' @export
+simulate_coverage = function(gr, ##needs field cn
+                             bins = NULL,
+                             binsize = 1000,
+                             diploid = TRUE,
+                             bias = NULL,
+                             basecov = 60,
+                             readsize = 150,
+                             purity = 0.95,
+                             poisson = TRUE,
+                             overdispersion = NA,
+                             normalize = TRUE)
+{
+  if (inherits(gr, 'gGraph'))
+    gr = gr$nodes$gr
+  #chrom.sizes = grab_chrom_sizes(genome)
+  
+  ## generate tiled genome
+  if (is.null(bins) || !inherits(bins, "GRanges")){
+    bins = gr.tile(seqlengths(gr), binsize)
+  }
+  
+  binsize = unique(width(bins))[1]
+  
+  ## compute expected bin coverage
+  bincov = (basecov * (readsize + binsize - 1)) / readsize
+  
+  ## get expected normal cn
+  ncn = 1
+  if (diploid) { ncn = 2 }
+  
+  ## compute relative CN
+  GenomicRanges::mcols(bins)[, "cn"] = gUtils::gr.val(query = bins,
+                                                      target = gr,
+                                                      val = "cn",
+                                                      mean = TRUE,
+                                                      na.rm = TRUE)$cn
+  
+  GenomicRanges::mcols(bins)[, "cn.rel"] = (purity * GenomicRanges::mcols(bins)[, "cn"] +
+                                              ncn * (1 - purity)) /
+    (purity * mean(GenomicRanges::mcols(bins)[, "cn"], na.rm = TRUE) +
+       ncn * (1 - purity))
+  
+  ## add multiplicative bias, if supplied
+  #GenomicRanges::mcols(bins)[, "bias"] = 1
+  if (!is.null(bias)){
+    #bias = read_segs(bias, field = bias.field)
+    GenomicRanges::mcols(bins)[, "bias"] = gUtils::gr.val(query = bins,
+                                                                target = bias,
+                                                                val = "bias",
+                                                                mean = TRUE,
+                                                                na.rm = TRUE)$bias
+  }
+  
+  ## simulate from Poisson distribution
+  GenomicRanges::mcols(bins)[, "cov.og"] = GenomicRanges::mcols(bins)[, "cn.rel"] * bincov #prebias
+  GenomicRanges::mcols(bins)[, "cov"] = GenomicRanges::mcols(bins)[, "cn.rel"] * GenomicRanges::mcols(bins)[, "bias"] * bincov
+  
+  if (poisson) {
+    if (is.na(overdispersion)){
+      GenomicRanges::mcols(bins)[, "cov"] = stats::rpois(n = length(bins), lambda = GenomicRanges::mcols(bins)[, "cov"])
+      GenomicRanges::mcols(bins)[, "cov.og"] = stats::rpois(n = length(bins), lambda = GenomicRanges::mcols(bins)[, "cov.og"])
+    } else {
+      GenomicRanges::mcols(bins)[, "cov"] = stats::rbinom(n = length(bins), mu =  GenomicRanges::mcols(bins)[, "cov"], size = 1 / overdispersion)
+      GenomicRanges::mcols(bins)[, "cov.og"] = stats::rbinom(n = length(bins), mu =  GenomicRanges::mcols(bins)[, "cov.og"], size = 1 / overdispersion)
+    }
+  }
+    
+  ## normalize if desired
+  if (normalize) {
+    GenomicRanges::mcols(bins)[, "cov"] = GenomicRanges::mcols(bins)[, "cov"]  / mean(GenomicRanges::mcols(bins)[, "cov"], na.rm = TRUE)
+  }
+  return(bins)
 }
 
 #' @name .simcov
